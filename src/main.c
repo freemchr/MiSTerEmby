@@ -969,82 +969,8 @@ static void draw_splash(FBDev *fb, int spinner_frame)
     fb_flip(fb);
 }
 
-/* show_footer=0 skips the "<version> installed"/update-available line and
- * the "A: back" hint — used by the --capture-about tool to render a clean
- * frame for a standalone marketing GIF (see tools/capture_about_gif.py). */
-static void draw_about_frame(FBDev *fb, int show_footer)
-{
-    theme_backdrop(fb);
-
-    static const char line1[] = "An Emby client for the MiSTer FPGA";
-    static const char line2[] = "By Chris Freeman (freemchr) - based on MiSTerFin by Pudding Studio";
-    static const char line3[] = "github.com/freemchr/MiSTerEmby";
-
-    const int s1 = 1;
-    const int sch = 8 * s1, lsp = 6;
-    int logo_gap = 8;
-    int text_h = sch + lsp + sch + lsp + sch;
-    int avail_top = SAFE_Y;
-    int avail_bottom = fb->height - 8 - SAFE_Y_BOT - 22;   /* clear of the version lines */
-    /* The logo carries the name itself, so it takes whatever the three
-     * lines of text leave. */
-    int logo_h = avail_bottom - avail_top - logo_gap - text_h;
-    if (logo_h > 180) logo_h = 180;
-    int total_h = logo_h + logo_gap + text_h;
-    int cur_y = avail_top + (avail_bottom - avail_top - total_h) / 2;
-
-    theme_brand_logo(fb, fb->width / 2, cur_y, logo_h);
-    cur_y += logo_h + logo_gap;
-
-    draw_text(fb, (fb->width - text_width(fb, line1, s1)) / 2, cur_y, line1, s1, COL_ITEM);
-    cur_y += sch + lsp;
-    draw_text(fb, (fb->width - text_width(fb, line2, s1)) / 2, cur_y, line2, s1, COL_DIM);
-    cur_y += sch + lsp;
-    draw_text(fb, (fb->width - text_width(fb, line3, s1)) / 2, cur_y, line3, s1, THEME_GREEN_LIGHT);
-
-    if (show_footer) {
-        UpdateState  us;
-        InstallState is;
-        char latest[32];
-        update_get_state(&us, &is, latest, sizeof(latest));
-
-        int safe_y = fb->height - 8 - SAFE_Y_BOT;
-        char installed[48];
-        snprintf(installed, sizeof(installed), "%s installed", APP_VERSION);
-
-        /* The hint plate first, so the version lines sit on top of it. */
-        theme_hint_bar(fb, "");
-        if (is == INST_DOWNLOADING) {
-            draw_text(fb, SAFE_X, safe_y - 14, installed, 1, COL_DIM);
-            draw_text(fb, SAFE_X, safe_y, "downloading", 1, THEME_GREEN);
-            theme_dots(fb, SAFE_X + text_width(fb, "downloading", 1) + 24, safe_y + 1);
-        } else if (is == INST_DONE) {
-            draw_text(fb, SAFE_X, safe_y - 14, installed, 1, COL_DIM);
-            draw_text(fb, SAFE_X, safe_y, "update installed - restart to apply", 1, THEME_GREEN);
-        } else if (is == INST_FAILED) {
-            draw_text(fb, SAFE_X, safe_y - 14, installed, 1, COL_DIM);
-            draw_text(fb, SAFE_X, safe_y, "download failed", 1, COL_ERR);
-        } else if (us == UPD_AVAILABLE) {
-            draw_text(fb, SAFE_X, safe_y - 14, installed, 1, COL_DIM);
-            char upd[64];
-            snprintf(upd, sizeof(upd), "%s available", latest);
-            draw_text(fb, SAFE_X, safe_y, upd, 1, THEME_GREEN_LIGHT);
-        } else {
-            draw_text(fb, SAFE_X, safe_y, installed, 1, COL_DIM);
-        }
-
-        const char *hint = (us == UPD_AVAILABLE && is == INST_IDLE) ? "B:update  A:back" : "A:back";
-        int hw = theme_hints_at(fb, 0, safe_y, hint, 1);
-        theme_hints_at(fb, fb->width - SAFE_X - hw, safe_y, hint, 0);
-    }
-
-    fb_flip(fb);
-}
-
-static void draw_about(FBDev *fb) { draw_about_frame(fb, 1); }
-
-/* ── what's-new screen (About -> install) ─────────────────────────────────
- * Pressing install on the About screen first shows the found release's
+/* ── what's-new screen (START when an update is available) ─────────────────
+ * START, when the home screen says an update is available, first shows the found release's
  * GitHub notes, scrollable, with the actual install behind one more
  * confirm — so an update is never a blind "something will change". The
  * notes arrive as markdown; this renders them as plain wrapped text with
@@ -1193,10 +1119,8 @@ static void draw_changelog(FBDev *fb, int scroll)
 }
 
 /* Shown instead of the plain black config-error screen when emby.conf
- * is missing/invalid or the configured username can't be resolved — same
- * starfield/cover-art chrome as the About screen (so it's not a jarring,
- * differently-styled dead end), with the About screen's own description
- * text swapped out for setup instructions. */
+ * is missing/invalid or the configured username can't be resolved, on the
+ * app's own backdrop so it's not a jarring, differently-styled dead end. */
 /* True when the server is https:// but TLS verification hasn't been opted
  * out of — so a connection failure might really be a self-signed cert the
  * user needs to allow with INSECURE_TLS (see eb_add_tls_args). Empty/http
@@ -2051,7 +1975,7 @@ static void draw_carousel_cards(FBDev *fb, double visual_sel, int cy)
 
 static void draw_carousel_hint(FBDev *fb)
 {
-    theme_hint_bar(fb, "LEFT/RIGHT:browse  B:open  SELECT:list view  START:about  A:exit");
+    theme_hint_bar(fb, "LEFT/RIGHT:browse  B:open  SELECT:list view  A:exit");
 }
 
 /* Ease-out cubic — starts fast, decelerates into the resting position,
@@ -2063,21 +1987,30 @@ static double carousel_ease(double t)
     return 1.0 - inv * inv * inv;
 }
 
-/* One quiet line under the title when a newer release exists — home
- * carousel only, the list view stays clean. START already opens the About
- * screen from anywhere, and that's where the install button lives, so
- * this is a signpost rather than a new path. Hidden while a download is
- * running or applied: About is telling that story to whoever started it.
- * Drawn by BOTH the settled carousel frame and every slide-animation
- * frame — left out of the animation it blinked off during each
- * LEFT/RIGHT transition while the title/clock/hints stayed put. */
+/* One quiet line under the title about updates — home carousel only, the
+ * list view stays clean. "START:update available" is the way in (START
+ * opens the release notes, with the install behind one more press); once
+ * an install has started, the same line reports how it's going. Drawn by
+ * BOTH the settled carousel frame and every slide-animation frame, so it
+ * doesn't blink off during a slide. */
 static void draw_carousel_update_notice(FBDev *fb)
 {
     UpdateState  us;
     InstallState is;
-    update_get_state(&us, &is, NULL, 0);
-    if (us == UPD_AVAILABLE && is == INST_IDLE) {
-        theme_hints_at(fb, SAFE_X, SAFE_Y + 27, "START:update available", 0);
+    char latest[32] = "";
+    update_get_state(&us, &is, latest, sizeof(latest));
+    int y = SAFE_Y + 27;
+    if (is == INST_DOWNLOADING) {
+        draw_text(fb, SAFE_X, y, "Downloading update", 1, THEME_GREEN);
+        theme_dots(fb, SAFE_X + text_width(fb, "Downloading update", 1) + 24, y + 1);
+    } else if (is == INST_DONE) {
+        draw_text(fb, SAFE_X, y, "Update installed - restart MiSTerEmby to apply", 1, THEME_GREEN);
+    } else if (is == INST_FAILED) {
+        draw_text(fb, SAFE_X, y, "Update download failed", 1, COL_ERR);
+    } else if (us == UPD_AVAILABLE) {
+        char msg[64];
+        snprintf(msg, sizeof(msg), "START:update to %s available", latest[0] ? latest : "a new version");
+        theme_hints_at(fb, SAFE_X, y, msg, 0);
     }
 }
 
@@ -5260,35 +5193,6 @@ np_hint:
 
 /* ── main ────────────────────────────────────────────────────────────────── */
 
-/* Hidden dev tool, not part of the shipped app UI: renders the About
- * screen's starfield (minus the version/hint footer) to a sequence of raw
- * BGRA framebuffer dumps under /tmp, for tools/capture_about_gif.py to turn
- * into a marketing GIF for the repo's README. Doesn't touch the real
- * running app state at all — just fb_open + draw + dump + repeat. */
-static int run_capture_about(int frame_count)
-{
-    srand(1);
-    FBDev fb;
-    if (fb_open(&fb, "/dev/fb0") < 0) {
-        fprintf(stderr, "Cannot open /dev/fb0\n");
-        return 1;
-    }
-    for (int i = 0; i < frame_count; i++) {
-        draw_about_frame(&fb, 0);
-        char path[64];
-        snprintf(path, sizeof(path), "/tmp/about_frame_%03d.raw", i);
-        FILE *f = fopen(path, "wb");
-        if (f) {
-            fwrite(fb.mem, 1, (size_t)fb.stride * fb.height, f);
-            fclose(f);
-        }
-        usleep(40000);
-    }
-    printf("%d %d %d\n", fb.width, fb.height, fb.stride);   /* for the GIF assembler */
-    fb_close(&fb);
-    return 0;
-}
-
 /* Hidden dev tool for iterating on browse-screen layout (the carousel, in
  * particular) without a real /dev/fb0 or deploying to hardware each time —
  * fabricates an FBDev backed by plain malloc'd buffers (fb_open needs a
@@ -5496,10 +5400,9 @@ static int run_preview_submenu(const char *item_id, int tab)
     return 0;
 }
 
-/* Restores whatever screen was behind the About overlay once it closes —
- * previously this only handled STATE_BROWSE, so closing About from the info
- * screen or the now-playing screen left the last About frame frozen on
- * screen instead of actually going back. */
+/* Restores whatever screen was behind the what's-new overlay once it closes
+ * — the info screen or the now-playing screen as well as the browser, not
+ * just whichever one happens to be the common case. */
 static void redraw_current_screen(FBDev *fb, AppState state)
 {
     switch (state) {
@@ -5681,8 +5584,6 @@ static void log_display_settings(void)
 
 int main(int argc, char **argv)
 {
-    if (argc > 1 && strcmp(argv[1], "--capture-about") == 0)
-        return run_capture_about(argc > 2 ? atoi(argv[2]) : 60);
     if (argc > 1 && strcmp(argv[1], "--preview-browse") == 0)
         return run_preview_browse(argc > 2 ? atoi(argv[2]) : -1,
                                    argc > 3 && strcmp(argv[3], "list") == 0);
@@ -5696,7 +5597,7 @@ int main(int argc, char **argv)
     if (argc > 1 && strcmp(argv[1], "--preview-tunnel") == 0)
         return run_preview_tunnel();
 
-    srand((unsigned)time(NULL));   /* for the About screen's starfield */
+    srand((unsigned)time(NULL));   /* for the visualizers' starfield */
     grid_init(&g_cfg);             /* just stores the pointer — config itself loads below */
     /* Before fb_open and the config load on purpose: sfx_init only reads two
      * files and starts a thread, and doing it here means the very first
@@ -5896,8 +5797,8 @@ int main(int argc, char **argv)
                     zaparoo_active, fb.interlaced_core, ddr_engaged);
     }
 
-    /* Start GitHub release check in background — result appears on the
-     * About screen once it lands. */
+    /* Start GitHub release check in background — result appears as the
+     * home screen's update notice once it lands. */
     update_check_start();
 
     /* Silently pre-fetch every library's grid background in the
@@ -5915,10 +5816,9 @@ int main(int argc, char **argv)
 
     int playing = 0;
     int spinner_frame_ctr = 0;
-    int about_visible = 0;
-    int changelog_visible = 0;   /* what's-new sub-screen over About, see draw_changelog */
+    int changelog_visible = 0;   /* the update's release notes, see draw_changelog */
     int changelog_scroll = 0;
-    double last_about_press = 0.0;
+    double last_start_press = 0.0;
     double screenshot_flash_until = 0.0;
     if (state == STATE_BROWSE) draw_browse(&fb);
 
@@ -5951,7 +5851,7 @@ int main(int argc, char **argv)
          * A human two-finger press is never perfectly simultaneous, and
          * this loop can run faster than the few milliseconds of stagger
          * between them — confirmed on hardware as SELECT's edge alone
-         * reaching the video submenu (or About, or the root list toggle)
+         * reaching the video submenu (or the update notes, or the root list toggle)
          * a frame or two before input_select_start_held() ever sees START
          * down too. So neither bit is allowed downstream the instant
          * input_poll() reports it: each is held back for COMBO_WINDOW to
@@ -6028,7 +5928,7 @@ int main(int argc, char **argv)
                     else
                         banner_enqueue(full);
                 } else if ((state == STATE_PLAYING || state == STATE_PLAYING_AUDIO) &&
-                           !about_visible && !g_submenu_visible) {
+                           !changelog_visible && !g_submenu_visible) {
                     switch (sev.kind) {
                     case SESSION_EV_PLAY_PAUSE: inp |= INP_A; break;
                     case SESSION_EV_PAUSE:      if (!g_paused) inp |= INP_A; break;
@@ -6061,73 +5961,45 @@ int main(int argc, char **argv)
             }
         }
 
-        /* START toggles the About screen — only from the browser, not
-         * mid-playback. */
-        if (!playing && (inp & INP_START) && (loop_now - last_about_press > 0.3)) {
-            last_about_press = loop_now;
-            about_visible = !about_visible;
-            changelog_visible = 0;
-            if (about_visible) draw_about(&fb);
-            else redraw_current_screen(&fb, state);
-            input_drain();
-            continue;
-        }
-        if (about_visible) {
-            /* What's-new sub-screen: shown between "install" on About and
-             * the actual install, so the user sees the release notes first.
-             * On-screen labels vs INP_* bits follow the app-wide mapping
-             * (screen "B" = INP_A, screen "A" = INP_B — same as About's own
-             * footer above). */
-            if (changelog_visible) {
-                if (inp & INP_B) {                    /* screen "A: back" */
-                    changelog_visible = 0;
-                    draw_about(&fb);
-                } else if (inp & INP_A) {             /* screen "B: install update" */
-                    update_start_install();
-                    changelog_visible = 0;
-                    draw_about(&fb);
-                } else {
-                    int nav = inp | nav_repeat;
-                    if (nav & INP_UP)   changelog_scroll--;
-                    if (nav & INP_DOWN) changelog_scroll++;
-                    int max_scroll = g_cl_count - changelog_rows(&fb);
-                    if (max_scroll < 0) max_scroll = 0;
-                    if (changelog_scroll < 0) changelog_scroll = 0;
-                    if (changelog_scroll > max_scroll) changelog_scroll = max_scroll;
-                    /* Same screenshot-flash guard as About's redraw below. */
-                    if (loop_now >= screenshot_flash_until)
-                        draw_changelog(&fb, changelog_scroll);
-                }
-                if (g_fb_flip_count == flips_before) usleep(16000);
+        /* START, when an update is available, opens its release notes —
+         * only from the browser, not mid-playback. B installs, A goes
+         * back; the home screen's notice then reports the download. */
+        if (!playing && !changelog_visible && (inp & INP_START) &&
+            (loop_now - last_start_press > 0.3)) {
+            last_start_press = loop_now;
+            UpdateState  us;
+            InstallState is;
+            update_get_state(&us, &is, NULL, 0);
+            if (us == UPD_AVAILABLE && is == INST_IDLE) {
+                changelog_prepare(&fb);
+                changelog_scroll = 0;
+                changelog_visible = 1;
+                draw_changelog(&fb, 0);
+                input_drain();
                 continue;
             }
-            if (inp & INP_B) {
-                about_visible = 0;
+        }
+        if (changelog_visible) {
+            /* On-screen labels vs INP_* bits follow the app-wide mapping
+             * (screen "B" = INP_A, screen "A" = INP_B). */
+            if (inp & INP_B) {                    /* screen "A: back" */
+                changelog_visible = 0;
+                redraw_current_screen(&fb, state);
+            } else if (inp & INP_A) {             /* screen "B: install update" */
+                update_start_install();
+                changelog_visible = 0;
                 redraw_current_screen(&fb, state);
             } else {
-                if (inp & INP_A) {
-                    UpdateState  us;
-                    InstallState is;
-                    update_get_state(&us, &is, NULL, 0);
-                    /* Only when the footer is actually offering "B: install"
-                     * — mid-download/done/failed the press means nothing,
-                     * same as before. */
-                    if (us == UPD_AVAILABLE && is == INST_IDLE) {
-                        changelog_prepare(&fb);
-                        changelog_scroll = 0;
-                        changelog_visible = 1;
-                        draw_changelog(&fb, 0);
-                        input_drain();
-                        if (g_fb_flip_count == flips_before) usleep(16000);
-                        continue;
-                    }
-                }
-                /* Redraw every frame to pick up update state — except right
-                 * after a screenshot taken while About was already open,
-                 * where that same unconditional redraw would otherwise
-                 * overwrite screenshot_take()'s "Screenshot saved" flash
-                 * before it was ever visible. */
-                if (loop_now >= screenshot_flash_until) draw_about(&fb);
+                int nav = inp | nav_repeat;
+                if (nav & INP_UP)   changelog_scroll--;
+                if (nav & INP_DOWN) changelog_scroll++;
+                int max_scroll = g_cl_count - changelog_rows(&fb);
+                if (max_scroll < 0) max_scroll = 0;
+                if (changelog_scroll < 0) changelog_scroll = 0;
+                if (changelog_scroll > max_scroll) changelog_scroll = max_scroll;
+                /* Not over a just-taken screenshot's "Screenshot saved" flash. */
+                if (loop_now >= screenshot_flash_until)
+                    draw_changelog(&fb, changelog_scroll);
             }
             if (g_fb_flip_count == flips_before) usleep(16000);
             continue;

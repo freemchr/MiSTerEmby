@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
-Converts a raw BGRX8888 framebuffer dump (from --capture-about or
---preview-browse) into a viewable PNG, using only the stdlib (zlib) — no
-Pillow/ImageMagick in the environment this was written in, same constraint
-capture_about_gif.py's from-scratch GIF writer already documents.
+Converts a raw BGRX8888 framebuffer dump (from --preview-browse or
+tools/run-local.sh) into a viewable PNG, using only the stdlib (zlib) — no
+Pillow/ImageMagick in the environment this was written in.
 
 Usage: python3 tools/raw_to_png.py <in.raw> <width> <height> <out.png>
 """

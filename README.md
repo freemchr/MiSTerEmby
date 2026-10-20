@@ -33,7 +33,7 @@ Rendered with `tools/run-local.sh` against the bundled mock server (`tools/mock-
 | | | |
 |:---:|:---:|:---:|
 | <img src="docs/images/screenshots/home.png" width="260"><br>Home: library tiles | <img src="docs/images/screenshots/movies.png" width="260"><br>Library list, played badge | <img src="docs/images/screenshots/episodes.png" width="260"><br>Episodes |
-| <img src="docs/images/screenshots/movie-info.png" width="260"><br>Info, resume progress | <img src="docs/images/screenshots/connect-pin.png" width="260"><br>Emby Connect PIN sign-in | <img src="docs/images/screenshots/about.png" width="260"><br>About |
+| <img src="docs/images/screenshots/movie-info.png" width="260"><br>Info, resume progress | <img src="docs/images/screenshots/connect-pin.png" width="260"><br>Emby Connect PIN sign-in | <img src="docs/images/screenshots/posters.png" width="260"><br>Poster view (next release) |
 | <img src="docs/images/screenshots/exit.png" width="260"><br>Exit dialog | <img src="docs/images/screenshots/sign-in-error.png" width="260"><br>Sign-in error | <img src="docs/images/screenshots/config-missing.png" width="260"><br>Setup help |
 
 ## <a id="features"></a>Features
@@ -95,7 +95,7 @@ MiSTerEmby has its own database for MiSTer Downloader and update_all, so it can 
 2. Run **downloader** or **update_all** from the Scripts menu. It installs `/media/fat/misteremby/` and `Scripts/MiSTerEmby.sh`.
 3. Create `emby.conf` as described below. The database never installs or overwrites `emby.conf` or your saved sign-in.
 
-If you use the database, update through the Downloader rather than the About screen's updater. Both write the same files, so the next Downloader run would put back the version the database lists.
+If you use the database, update through the Downloader rather than the app's own updater (START when the home screen says an update is available). Both write the same files, so the next Downloader run would put back the version the database lists.
 
 ## <a id="configuring"></a>Configuring `emby.conf`
 
@@ -141,7 +141,7 @@ Button names follow Xbox-style labels (bottom face button = A, right = B). On Ni
 | Browse | Up / Down | Up / Down | Move |
 | Browse | B | B / Enter / X | Open |
 | Browse | A | A / Esc / Backspace / Z | Back (exit dialog at the top level) |
-| Anywhere | START | Pause / Home | About screen |
+| Home | START | Pause / Home | When an update is available: its release notes, then B to install |
 | Info | B | B / Enter / X | Play or resume |
 | Info | SELECT | Tab | Play from the start (when there's a resume point) |
 | Video | B | B / Enter / X | Pause / resume |
