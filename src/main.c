@@ -30,6 +30,7 @@
 #endif
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
+#include "logo_png.h"
 #include "ddr.h"
 #include "emby.h"
 #include "json.h"
@@ -959,6 +960,76 @@ static void refetch_frame_keep_selection(FBDev *fb)
 }
 
 
+/* ── the MiSTerEmby logo ───────────────────────────────────────────────────
+ * Built into the binary (src/logo_png.h, from assets/logo.png), decoded on
+ * first use and box-filtered down to the exact size it's drawn at — a plain
+ * nearest-neighbour shrink of artwork this detailed shimmers on a CRT. The
+ * scaled copy is kept, so redrawing it is one blit. */
+static uint8_t *g_brand_src = NULL;
+static int      g_brand_sw = 0, g_brand_sh = 0;
+static uint8_t *g_brand_px = NULL;
+static int      g_brand_w = 0, g_brand_h = 0;
+
+/* Area-average RGBA downscale, weighting colour by alpha so the transparent
+ * edge doesn't bleed dark fringes into the outline. */
+static uint8_t *brand_box_scale(const uint8_t *src, int sw, int sh, int dw, int dh)
+{
+    uint8_t *out = malloc((size_t)dw * dh * 4);
+    if (!out) return NULL;
+    for (int y = 0; y < dh; y++) {
+        int y0 = y * sh / dh, y1 = (y + 1) * sh / dh;
+        if (y1 <= y0) y1 = y0 + 1;
+        for (int x = 0; x < dw; x++) {
+            int x0 = x * sw / dw, x1 = (x + 1) * sw / dw;
+            if (x1 <= x0) x1 = x0 + 1;
+            uint32_t r = 0, g = 0, b = 0, a = 0, n = 0;
+            for (int yy = y0; yy < y1 && yy < sh; yy++) {
+                const uint8_t *p = src + ((size_t)yy * sw + x0) * 4;
+                for (int xx = x0; xx < x1 && xx < sw; xx++, p += 4) {
+                    r += p[0] * p[3]; g += p[1] * p[3]; b += p[2] * p[3];
+                    a += p[3]; n++;
+                }
+            }
+            uint8_t *o = out + ((size_t)y * dw + x) * 4;
+            if (a) { o[0] = r / a; o[1] = g / a; o[2] = b / a; }
+            else   { o[0] = o[1] = o[2] = 0; }
+            o[3] = n ? a / n : 0;
+        }
+    }
+    return out;
+}
+
+/* Draws the logo h rows tall, centred on cx. Returns its drawn width, or 0
+ * if it couldn't be decoded. */
+static int draw_app_logo(FBDev *fb, int cx, int y, int h)
+{
+    if (!g_brand_src) {
+        int comp;
+        g_brand_src = stbi_load_from_memory(logo_png, (int)sizeof(logo_png),
+                                           &g_brand_sw, &g_brand_sh, &comp, 4);
+        if (!g_brand_src) return 0;
+    }
+    int w = (int)((double)g_brand_sw / g_brand_sh * h * par_correction(fb) + 0.5);
+    if (!g_brand_px || g_brand_w != w || g_brand_h != h) {
+        free(g_brand_px);
+        g_brand_px = brand_box_scale(g_brand_src, g_brand_sw, g_brand_sh, w, h);
+        if (!g_brand_px) return 0;
+        g_brand_w = w; g_brand_h = h;
+    }
+    fb_blit(fb, g_brand_px, w, h, cx - w / 2, y, w, h, 255);
+    return w;
+}
+
+/* The startup screen while the server is being reached and signed in to. */
+static void draw_splash(FBDev *fb, int spinner_frame)
+{
+    theme_backdrop(fb);
+    int h = fb->height * 3 / 5;
+    draw_app_logo(fb, fb->width / 2, (fb->height - h) / 2 - 6, h);
+    draw_spinner_frame(fb, spinner_frame);
+    fb_flip(fb);
+}
+
 /* show_footer=0 skips the "<version> installed"/update-available line and
  * the "A: back" hint — used by the --capture-about tool to render a clean
  * frame for a standalone marketing GIF (see tools/capture_about_gif.py). */
@@ -966,34 +1037,26 @@ static void draw_about_frame(FBDev *fb, int show_footer)
 {
     theme_backdrop(fb);
 
-    static const char title[] = "MiSTerEmby";
     static const char line1[] = "An Emby client for the MiSTer FPGA";
     static const char line2[] = "By Chris Freeman (freemchr) - based on MiSTerFin by Pudding Studio";
     static const char line3[] = "github.com/freemchr/MiSTerEmby";
 
-    const int ts = 3, s1 = 1;
-    const int tch = 8 * ts, sch = 8 * s1, lsp = 6;
-    int logo_h = fb->height >= 288 ? 64 : 52;
-    int logo_gap = 12;
+    const int s1 = 1;
+    const int sch = 8 * s1, lsp = 6;
+    int logo_gap = 8;
+    int text_h = sch + lsp + sch + lsp + sch;
+    int avail_top = SAFE_Y;
+    int avail_bottom = fb->height - 8 - SAFE_Y_BOT - 22;   /* clear of the version lines */
+    /* The logo carries the name itself, so it takes whatever the three
+     * lines of text leave. */
+    int logo_h = avail_bottom - avail_top - logo_gap - text_h;
+    if (logo_h > 180) logo_h = 180;
+    int total_h = logo_h + logo_gap + text_h;
+    int cur_y = avail_top + (avail_bottom - avail_top - total_h) / 2;
 
-    int total_h = logo_h + logo_gap + tch + lsp * 2 + sch + lsp + sch + lsp + sch;
-    int avail_bottom = fb->height - 8 - SAFE_Y_BOT - 14;
-    int cur_y = (avail_bottom - total_h) / 2 + 6;
-    if (cur_y < SAFE_Y) cur_y = SAFE_Y;
-
-    int logo_w = (int)(logo_h * par_correction(fb) + 0.5);
-    theme_logo(fb, (fb->width - logo_w) / 2, cur_y, logo_h);
+    draw_app_logo(fb, fb->width / 2, cur_y, logo_h);
     cur_y += logo_h + logo_gap;
 
-    /* "MiSTer" in white, "Emby" in Emby green — one word, two weights of
-     * the same identity, the way Emby's own wordmark sets its name apart. */
-    {
-        int tw = text_width(fb, title, ts);
-        int x = (fb->width - tw) / 2;
-        draw_text(fb, x, cur_y, "MiSTer", ts, COL_TITLE);
-        draw_text(fb, x + text_width(fb, "MiSTer", ts), cur_y, "Emby", ts, THEME_GREEN);
-    }
-    cur_y += tch + lsp * 2;
     draw_text(fb, (fb->width - text_width(fb, line1, s1)) / 2, cur_y, line1, s1, COL_ITEM);
     cur_y += sch + lsp;
     draw_text(fb, (fb->width - text_width(fb, line2, s1)) / 2, cur_y, line2, s1, COL_DIM);
@@ -5784,8 +5847,7 @@ int main(int argc, char **argv)
             int done = (g_startup_result != STARTUP_PENDING);
             pthread_mutex_unlock(&g_startup_mutex);
             if (done) break;
-            draw_spinner_frame(&fb, spinner_frame++);
-            fb_flip(&fb);
+            draw_splash(&fb, spinner_frame++);
             usleep(SPINNER_BLINK_MS * 1000);
         }
     }
