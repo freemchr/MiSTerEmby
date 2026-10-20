@@ -1,0 +1,178 @@
+{
+ "v": 1,
+ "db_id": "freemchr/misteremby",
+ "timestamp": 1792533594,
+ "base_files_url": "https://raw.githubusercontent.com/freemchr/MiSTerEmby/db/files/v1.0.0/",
+ "files": {
+  "Scripts/MiSTerEmby.sh": {
+   "hash": "dce16869e59a0e2aa31c3398a200a142",
+   "size": 249,
+   "tags": [
+    "misteremby"
+   ]
+  },
+  "misteremby/emby.conf.example": {
+   "hash": "48fac0009c4c2a0812d9465e35df758b",
+   "size": 4735,
+   "tags": [
+    "misteremby"
+   ]
+  },
+  "misteremby/font/font-alpha.raw": {
+   "hash": "f6e6def758bfee92ac19142a3a4d1a9f",
+   "size": 49696,
+   "tags": [
+    "misteremby"
+   ]
+  },
+  "misteremby/font/font-bitmap.raw": {
+   "hash": "f6e6def758bfee92ac19142a3a4d1a9f",
+   "size": 49696,
+   "tags": [
+    "misteremby"
+   ]
+  },
+  "misteremby/font/font.desc": {
+   "hash": "bed8cc9f28deafdc8d488d2a4ef69c52",
+   "size": 2593,
+   "tags": [
+    "misteremby"
+   ]
+  },
+  "misteremby/font2x/font-alpha.raw": {
+   "hash": "58786775078bd8b35052f91593553623",
+   "size": 74144,
+   "tags": [
+    "misteremby"
+   ]
+  },
+  "misteremby/font2x/font-bitmap.raw": {
+   "hash": "58786775078bd8b35052f91593553623",
+   "size": 74144,
+   "tags": [
+    "misteremby"
+   ]
+  },
+  "misteremby/font2x/font.desc": {
+   "hash": "7baf071e5ffeba13e4f69e587bef4fff",
+   "size": 2593,
+   "tags": [
+    "misteremby"
+   ]
+  },
+  "misteremby/misteremby-arm": {
+   "hash": "1427335fca54a1bfb3e5be22a18b3def",
+   "size": 1932200,
+   "tags": [
+    "misteremby"
+   ]
+  },
+  "misteremby/mplayer-arm": {
+   "hash": "8f59576f57e09924ed6a65ecb3e2d01d",
+   "size": 14602112,
+   "tags": [
+    "misteremby"
+   ]
+  },
+  "misteremby/sfx/confirm.wav": {
+   "hash": "b63ffc945bce4e75b93526fc3a2b569f",
+   "size": 26550,
+   "tags": [
+    "misteremby"
+   ]
+  },
+  "misteremby/sfx/nav.wav": {
+   "hash": "a027bc69b936f7c1faf128f72972dd39",
+   "size": 8718,
+   "tags": [
+    "misteremby"
+   ]
+  },
+  "misteremby/sfx/shutter.wav": {
+   "hash": "e698ee50d26f22b72e86717e9bf482cb",
+   "size": 165986,
+   "tags": [
+    "misteremby"
+   ]
+  },
+  "misteremby/subfont/font-alpha.raw": {
+   "hash": "25801669e0d168cb715b52b4b330cb12",
+   "size": 33079,
+   "tags": [
+    "misteremby"
+   ]
+  },
+  "misteremby/subfont/font-bitmap.raw": {
+   "hash": "25801669e0d168cb715b52b4b330cb12",
+   "size": 33079,
+   "tags": [
+    "misteremby"
+   ]
+  },
+  "misteremby/subfont/font.desc": {
+   "hash": "c6bddc104d234ae49b728a001646b7a5",
+   "size": 2567,
+   "tags": [
+    "misteremby"
+   ]
+  },
+  "misteremby/subfont2x/font-alpha.raw": {
+   "hash": "f6e6def758bfee92ac19142a3a4d1a9f",
+   "size": 49696,
+   "tags": [
+    "misteremby"
+   ]
+  },
+  "misteremby/subfont2x/font-bitmap.raw": {
+   "hash": "f6e6def758bfee92ac19142a3a4d1a9f",
+   "size": 49696,
+   "tags": [
+    "misteremby"
+   ]
+  },
+  "misteremby/subfont2x/font.desc": {
+   "hash": "6c0f86ed0a6b160cee325d93750dfe53",
+   "size": 2597,
+   "tags": [
+    "misteremby"
+   ]
+  }
+ },
+ "folders": {
+  "Scripts/": {
+   "tags": [
+    "misteremby"
+   ]
+  },
+  "misteremby/": {
+   "tags": [
+    "misteremby"
+   ]
+  },
+  "misteremby/font/": {
+   "tags": [
+    "misteremby"
+   ]
+  },
+  "misteremby/font2x/": {
+   "tags": [
+    "misteremby"
+   ]
+  },
+  "misteremby/sfx/": {
+   "tags": [
+    "misteremby"
+   ]
+  },
+  "misteremby/subfont/": {
+   "tags": [
+    "misteremby"
+   ]
+  },
+  "misteremby/subfont2x/": {
+   "tags": [
+    "misteremby"
+   ]
+  }
+ }
+}
