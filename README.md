@@ -37,7 +37,7 @@ Rendered with `tools/run-local.sh` against the bundled mock server (`tools/mock-
 
 - **Emby-style interface**: dark charcoal surfaces, Emby green for focus, progress and played state, rounded tiles and dialogs, button-chip hints along the bottom
 - **Sign in without typing on a gamepad**: an **Emby Connect PIN** (enter it at emby.media/pin from any phone or computer). A local username/password, an Emby Connect account or an API key in `emby.conf` also work. The sign-in is saved, and a revoked one is detected and requested again
-- **Continue Watching and Next Up** appear as the first home tiles, when they have something in them
+- **Continue Watching, Next Up and Collections** appear as the first home tiles when they have something in them. Collections lists your Emby box sets even if the server shows no Collections library
 - **Home screen**: a row of library tiles (name and item count) over a dimmed mosaic of that library's covers. LEFT/RIGHT slides between them; SELECT swaps to a plain list
 - **Browsing**: lists with cover art, played badges, resume progress bars, backdrop art behind the list, a live clock, and scrolling for long titles. Large libraries page in as you scroll
 - **Info screen**: backdrop, logo, year, rating, overview, and Play/Resume buttons

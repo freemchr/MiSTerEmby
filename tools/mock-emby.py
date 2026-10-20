@@ -222,6 +222,15 @@ def build_library():
 
 ITEMS, CHILDREN = build_library()
 
+# Two collections (Emby BoxSets) over a few of the movies. They sit under a
+# parent that isn't one of VIEWS, like Emby box sets on a server with no
+# Collections library shown.
+for _n, (_name, _members) in enumerate([("Mock Trilogy", 3), ("Mock Saga", 5)]):
+    _bid = "boxset-%d" % _n
+    ITEMS[_bid] = base_item(_bid, _name, "BoxSet", ChildCount=_members)
+    CHILDREN[_bid] = CHILDREN["view-movies"][_n * 10:_n * 10 + _members]
+CHILDREN["boxsets"] = ["boxset-0", "boxset-1"]
+
 
 def descendants(parent_id, kinds=None):
     """Every item under parent_id, optionally filtered to BaseItemKinds."""
@@ -458,7 +467,9 @@ class Handler(BaseHTTPRequestHandler):
             kinds = query.get("IncludeItemTypes", [None])[0]
             kinds = set(kinds.split(",")) if kinds else None
 
-            if parent is None:
+            if parent is None and kinds == {"BoxSet"}:
+                ids = CHILDREN["boxsets"]
+            elif parent is None:
                 ids = []
             elif recursive:
                 ids = descendants(parent, kinds)

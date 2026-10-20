@@ -299,9 +299,9 @@ static void grid_cache_populate(GridLibCache *gc, const EbItem *view,
          * keyed on a total that barely moves would show stale art for ages
          * (see grid_cache_load_from_disk's own staleness check). They're only
          * ever a couple of items, so re-fetching is cheap. */
-        n = view_is_resume(view)
-              ? eb_list_resume(s_cfg, grid_items, GRID_FETCH_MAX, NULL)
-              : eb_list_nextup(s_cfg, grid_items, GRID_FETCH_MAX, NULL);
+        n = view_is_resume(view)      ? eb_list_resume(s_cfg, grid_items, GRID_FETCH_MAX, NULL)
+          : view_is_collections(view) ? eb_list_collections(s_cfg, grid_items, GRID_FETCH_MAX, NULL)
+                                      : eb_list_nextup(s_cfg, grid_items, GRID_FETCH_MAX, NULL);
     } else {
         if (grid_cache_load_from_disk(gc, view, item_type, cell_w)) {
             grid_cell_order_shuffle(gc);

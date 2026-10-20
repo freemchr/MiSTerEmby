@@ -375,7 +375,8 @@ typedef enum {
 typedef enum {
     FRAME_VIEWS, FRAME_ITEMS, FRAME_SEASONS, FRAME_EPISODES,
     FRAME_RESUME,   /* Continue Watching — see EB_VIEW_RESUME */
-    FRAME_NEXTUP    /* Next Up          — see EB_VIEW_NEXTUP */
+    FRAME_NEXTUP,   /* Next Up          — see EB_VIEW_NEXTUP */
+    FRAME_COLLECTIONS /* Collections    — see EB_VIEW_COLLECTIONS */
 } FrameKind;
 
 /* Rows fetched for each home row. Both are "what to watch next" lists rather
@@ -692,12 +693,14 @@ static int fetch_frame_window(int start_index)
         static const struct { const char *id, *name; int kind; } synth[] = {
             { EB_VIEW_RESUME, "Continue Watching", EB_SYNTH_RESUME },
             { EB_VIEW_NEXTUP, "Next Up",  EB_SYNTH_NEXTUP },
+            { EB_VIEW_COLLECTIONS, "Collections", EB_SYNTH_COLLECTIONS },
         };
-        for (int s = 0; s < 2; s++) {
+        for (int s = 0; s < 3; s++) {
             EbItem probe[1];
             int64_t total = 0;
             int got = (s == 0) ? eb_list_resume(&g_cfg, probe, 1, &total)
-                                : eb_list_nextup(&g_cfg, probe, 1, &total);
+                    : (s == 1) ? eb_list_nextup(&g_cfg, probe, 1, &total)
+                               : eb_list_collections(&g_cfg, probe, 1, &total);
             if (got <= 0) continue;
             if (total <= 0) total = got;
 
@@ -730,6 +733,10 @@ static int fetch_frame_window(int start_index)
         g_window_start = 0;
         g_item_count = eb_list_nextup(&g_cfg, g_items, HOME_ROW_MAX, &g_total_count);
         home_row_label_episodes();
+        break;
+    case FRAME_COLLECTIONS:
+        g_window_start = 0;
+        g_item_count = eb_list_collections(&g_cfg, g_items, EB_PAGE_SIZE, &g_total_count);
         break;
     case FRAME_ITEMS:
         /* Episode counts for series rows used to be fetched here with one
@@ -1838,7 +1845,9 @@ static void draw_confirm_exit(FBDev *fb)
 static void carousel_format_count(const EbItem *it, int64_t count, char *buf, size_t bufsz)
 {
     const char *ct = it->collection_type;
-    if (view_is_synthetic(it))
+    if (view_is_collections(it))
+        snprintf(buf, bufsz, "%lld collection%s", (long long)count, count == 1 ? "" : "s");
+    else if (view_is_synthetic(it))
         snprintf(buf, bufsz, "%lld item%s", (long long)count, count == 1 ? "" : "s");
     else if (!strcmp(ct, "movies"))
         snprintf(buf, bufsz, "%lld movie%s", (long long)count, count == 1 ? "" : "s");
@@ -5762,6 +5771,8 @@ int main(int argc, char **argv)
                         push_frame(FRAME_RESUME, "Continue Watching", NULL, NULL, NULL, NULL);
                     else if (view_is_nextup(it))
                         push_frame(FRAME_NEXTUP, "Next Up", NULL, NULL, NULL, NULL);
+                    else if (view_is_collections(it))
+                        push_frame(FRAME_COLLECTIONS, "Collections", NULL, NULL, NULL, NULL);
                     else
                         push_frame(FRAME_ITEMS, it->name, it->id, NULL, NULL,
                                    it->collection_type[0] ? it->collection_type : f->collection_type);

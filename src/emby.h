@@ -446,11 +446,13 @@ int eb_list_random_tracks(const EbConfig *cfg, const char *parent_id, EbItem *ou
  * filenames). */
 #define EB_VIEW_RESUME  "misteremby-resume"
 #define EB_VIEW_NEXTUP  "misteremby-nextup"
+#define EB_VIEW_COLLECTIONS "misteremby-collections"
 
 /* Values for EbItem.synthetic. The ids above remain as grid-cache keys; these
  * are what the code actually branches on. */
 #define EB_SYNTH_RESUME 1
 #define EB_SYNTH_NEXTUP 2
+#define EB_SYNTH_COLLECTIONS 3
 
 /* The two home rows are presented as extra cards on the library carousel, but
  * they aren't libraries — no ParentId to list, no collection type, and their
@@ -458,6 +460,7 @@ int eb_list_random_tracks(const EbConfig *cfg, const char *parent_id, EbItem *ou
  * normally reach for the server via a view id has to route around them. */
 int view_is_resume(const EbItem *v);
 int view_is_nextup(const EbItem *v);
+int view_is_collections(const EbItem *v);
 int view_is_synthetic(const EbItem *v);
 
 /* The BaseItemKind that actually represents "one unit" of a library, keyed
@@ -478,6 +481,12 @@ int eb_list_resume(const EbConfig *cfg, EbItem *out, int max, int64_t *total_out
 /* The next unwatched episode of each series in progress (the server's
  * "Next Up"). Episodes only, by definition. */
 int eb_list_nextup(const EbConfig *cfg, EbItem *out, int max, int64_t *total_out);
+
+/* The user's Emby collections (BoxSet items), by name. A collection opens
+ * like a folder: its contents list under its own id as ParentId. Emby keeps
+ * box sets whether or not a Collections library is shown, so this is how
+ * they get a home tile on servers without one. */
+int eb_list_collections(const EbConfig *cfg, EbItem *out, int max, int64_t *total_out);
 
 /* TV hierarchy. */
 int eb_list_seasons(const EbConfig *cfg, const char *series_id, EbItem *out, int max);

@@ -294,6 +294,7 @@ static void parse_item_fields(const JsonDoc *doc, const JsonNode *item, EbItem *
     else if (!strcmp(type_buf, "MusicArtist"))   it->type = EB_TYPE_ARTIST;
     else if (!strcmp(type_buf, "MusicAlbum"))    it->type = EB_TYPE_ALBUM;
     else if (!strcmp(type_buf, "Audio"))         it->type = EB_TYPE_TRACK;
+    else if (!strcmp(type_buf, "BoxSet"))        it->type = EB_TYPE_FOLDER;   /* a collection */
     else if (!strcmp(type_buf, "CollectionFolder") ||
              !strcmp(type_buf, "Folder"))        it->type = EB_TYPE_FOLDER;
     else                                          it->type = EB_TYPE_OTHER;
@@ -1765,6 +1766,25 @@ int eb_list_nextup(const EbConfig *cfg, EbItem *out, int max, int64_t *total_out
     return kept;
 }
 
+int eb_list_collections(const EbConfig *cfg, EbItem *out, int max, int64_t *total_out)
+{
+    char path[384];
+    snprintf(path, sizeof(path),
+        "/Users/%s/Items?Recursive=true&IncludeItemTypes=BoxSet"
+        "&SortBy=SortName&SortOrder=Ascending&Fields=ProductionYear,ChildCount"
+        "&EnableUserData=true&ImageTypeLimit=1&EnableImageTypes=Primary,Backdrop"
+        "&EnableTotalRecordCount=true&Limit=%d",
+        cfg->user_id, max);
+
+    EbResponse r;
+    if (!eb_fetch(cfg, path, &r)) return -1;
+    int n = parse_item_list(&r.doc, out, max);
+    parse_total_count(&r.doc, total_out);
+    for (int i = 0; i < n; i++) out[i].type = EB_TYPE_FOLDER;
+    eb_response_free(&r);
+    return n;
+}
+
 int eb_get_item_details(const EbConfig *cfg, const char *item_id, EbItem *out)
 {
     char safe_id[EB_ID_LEN];
@@ -2295,6 +2315,7 @@ void eb_report_capabilities(const EbConfig *cfg)
 
 int view_is_resume(const EbItem *v)    { return v->synthetic == EB_SYNTH_RESUME; }
 int view_is_nextup(const EbItem *v)    { return v->synthetic == EB_SYNTH_NEXTUP; }
+int view_is_collections(const EbItem *v) { return v->synthetic == EB_SYNTH_COLLECTIONS; }
 int view_is_synthetic(const EbItem *v) { return v->synthetic != 0; }
 
 const char *collection_item_type(const char *collection_type)
