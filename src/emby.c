@@ -1187,8 +1187,8 @@ void eb_token_clear(void)
 
 /* POST + parse, for server calls that return a body (sign-in).
  * json_body may be NULL. */
-static int eb_post_fetch(const EbConfig *cfg, const char *path,
-                          const char *json_body, EbResponse *r)
+static int eb_post_fetch_timeout(const EbConfig *cfg, const char *path,
+                                 const char *json_body, EbResponse *r, int timeout_s)
 {
     memset(r, 0, sizeof(*r));
 
@@ -1206,12 +1206,18 @@ static int eb_post_fetch(const EbConfig *cfg, const char *path,
         if (!ok) { unlink(tmp_path); return 0; }
     }
 
-    r->text = eb_request_alloc(cfg, "POST", path, json_body ? tmp_path : NULL, 10);
+    r->text = eb_request_alloc(cfg, "POST", path, json_body ? tmp_path : NULL, timeout_s);
     if (json_body) unlink(tmp_path);
 
     if (!r->text) return 0;
     if (!json_parse(&r->doc, r->text)) { eb_response_free(r); return 0; }
     return 1;
+}
+
+static int eb_post_fetch(const EbConfig *cfg, const char *path,
+                          const char *json_body, EbResponse *r)
+{
+    return eb_post_fetch_timeout(cfg, path, json_body, r, 10);
 }
 
 /* Copies a credential pair out of a response only when neither part carries
@@ -1906,8 +1912,11 @@ int eb_live_open(const EbConfig *cfg, const char *channel_id,
         "/Items/%s/PlaybackInfo?UserId=%s&AutoOpenLiveStream=true&IsPlayback=true",
         safe_id, cfg->user_id);
 
+    /* 30s, not the usual 10: the server has to tune the channel before it
+     * answers, and an internet (IPTV) stream was measured taking over 10s
+     * to open. */
     EbResponse r;
-    if (!eb_post_fetch(cfg, path, "{}", &r)) return 0;
+    if (!eb_post_fetch_timeout(cfg, path, "{}", &r, 30)) return 0;
     const JsonNode *root = json_root(&r.doc);
     char msid[EB_ID_LEN + 16] = "", lsid[96] = "";
     copy_raw_str(&r.doc, root, "MediaSources[0].Id", msid, sizeof(msid));

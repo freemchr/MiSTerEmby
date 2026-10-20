@@ -444,6 +444,8 @@ static int    g_root_sel = 0;
  * own exit-confirm, added so a stray B press while browsing can't silently
  * quit the app. See the STATE_BROWSE input handling and draw_confirm_exit(). */
 static int    g_confirm_exit = 0;
+/* Which exit-dialog button has focus: 0 = Exit, 1 = Cancel. */
+static int    g_exit_sel = 0;
 /* SELECT on the music library's artist list starts an infinite shuffle
  * instead of drilling in — reuses g_items/g_item_count/g_audio_queue_pos
  * exactly like a normal album's track list, just refilled with a fresh
@@ -1478,8 +1480,9 @@ static const char *browse_cover_wanted_id(void)
         (it->type == EB_TYPE_MOVIE || it->type == EB_TYPE_MUSIC_VIDEO ||
          it->type == EB_TYPE_EPISODE ||
          it->type == EB_TYPE_SERIES || it->type == EB_TYPE_SEASON ||
-         it->type == EB_TYPE_ARTIST || it->type == EB_TYPE_ALBUM || it->type == EB_TYPE_TRACK ||
-         it->type == EB_TYPE_CHANNEL);
+         it->type == EB_TYPE_ARTIST || it->type == EB_TYPE_ALBUM || it->type == EB_TYPE_TRACK);
+    /* Not channels: their logo sits at the left of each row instead (see
+     * draw_browse), the way Emby's guide shows it. */
     return wants ? it->id : "";
 }
 
@@ -1802,14 +1805,23 @@ static void draw_confirm_exit(FBDev *fb)
     theme_dialog(fb, x, y, w, h, "Exit");
     draw_text(fb, (fb->width - text_width(fb, msg, 1)) / 2, y + 40, msg, 1, COL_ITEM);
 
-    /* Primary action filled green, secondary as a neutral plate — Emby's
-     * own dialog button pairing. */
+    /* The focused button is filled Emby green, the other a neutral plate;
+     * LEFT/RIGHT moves the focus and B presses it. */
     int bw = 96, bh = 18, by = y + h - bh - 10;
-    int bx1 = fb->width / 2 - bw - 6, bx2 = fb->width / 2 + 6;
-    theme_pill(fb, bx1, by, bw, bh, THEME_GREEN, 255);
-    theme_pill(fb, bx2, by, bw, bh, THEME_SURFACE_HI, 255);
-    draw_text(fb, bx1 + (bw - text_width(fb, "B  Exit", 1)) / 2, by + 5, "B  Exit", 1, 0xFF, 0xFF, 0xFF);
-    draw_text(fb, bx2 + (bw - text_width(fb, "A  Cancel", 1)) / 2, by + 5, "A  Cancel", 1, COL_ITEM);
+    int bx[2] = { fb->width / 2 - bw - 6, fb->width / 2 + 6 };
+    static const char *const label[2] = { "Exit", "Cancel" };
+    for (int i = 0; i < 2; i++) {
+        int on = (i == g_exit_sel);
+        if (on) theme_pill(fb, bx[i], by, bw, bh, THEME_GREEN, 255);
+        else    theme_pill(fb, bx[i], by, bw, bh, THEME_SURFACE_HI, 255);
+        int tx = bx[i] + (bw - text_width(fb, label[i], 1)) / 2;
+        if (on) draw_text(fb, tx, by + 5, label[i], 1, 0xFF, 0xFF, 0xFF);
+        else    draw_text(fb, tx, by + 5, label[i], 1, COL_ITEM);
+    }
+    /* Over the screen's own hints, which the dimming leaves faintly legible. */
+    fb_fill_rect_alpha(fb, 0, fb->height - 8 - SAFE_Y_BOT - 8, fb->width, 8 + SAFE_Y_BOT + 8,
+                       0x0C, 0x0C, 0x0C, 255);
+    theme_hint_bar(fb, "LEFT/RIGHT:choose  B:select  A:cancel");
     fb_flip(fb);
 }
 
@@ -2201,6 +2213,7 @@ typedef struct {
     char     id[EB_ID_LEN];
     char     tag[12];
     int      w, h;
+    int      fit;           /* scaled to fit (a logo) rather than crop-to-fill */
     uint8_t *px, *dim;      /* full and pre-dimmed, both w*h RGBA */
     unsigned stamp;
 } PosterSlot;
@@ -2238,16 +2251,45 @@ static uint8_t *poster_scale(const uint8_t *src, int sw, int sh, int dw, int dh,
     return out;
 }
 
+/* Fit-inside scale for a logo: the whole image, centred on a dark plate,
+ * since cropping a channel's logo would cut its name off. */
+static uint8_t *poster_scale_fit(const uint8_t *src, int sw, int sh, int dw, int dh, double par)
+{
+    uint8_t *out = malloc((size_t)dw * dh * 4);
+    if (!out) return NULL;
+    for (size_t i = 0; i < (size_t)dw * dh; i++) {
+        out[i * 4] = out[i * 4 + 1] = out[i * 4 + 2] = 0x26; out[i * 4 + 3] = 255;
+    }
+    int fh = dh - 2;
+    int fw = (int)((double)sw / sh * fh * par + 0.5);
+    if (fw > dw - 2) { fh = (int)((double)fh * (dw - 2) / fw); fw = dw - 2; }
+    if (fw < 1 || fh < 1) return out;
+    int ox = (dw - fw) / 2, oy = (dh - fh) / 2;
+    for (int y = 0; y < fh; y++) {
+        int sy = y * sh / fh;
+        for (int x = 0; x < fw; x++) {
+            int sx = x * sw / fw;
+            const uint8_t *p = src + ((size_t)sy * sw + sx) * 4;
+            uint8_t *o = out + ((size_t)(oy + y) * dw + ox + x) * 4;
+            unsigned a = p[3];
+            o[0] = (uint8_t)((p[0] * a + 0x26 * (255 - a)) / 255);
+            o[1] = (uint8_t)((p[1] * a + 0x26 * (255 - a)) / 255);
+            o[2] = (uint8_t)((p[2] * a + 0x26 * (255 - a)) / 255);
+        }
+    }
+    return out;
+}
+
 /* The item's art at cell size, or NULL while it isn't cached (or this
  * redraw's decode budget is spent) — the cell shows a placeholder, and a
  * later redraw fills it in. */
-static PosterSlot *poster_get(FBDev *fb, const EbItem *it, int cw, int ch)
+static PosterSlot *poster_lookup(FBDev *fb, const EbItem *it, int cw, int ch, int fit)
 {
     if (!it->image_tag[0]) return NULL;
     PosterSlot *lru = &g_posters[0];
     for (int i = 0; i < POSTER_POOL; i++) {
         PosterSlot *p = &g_posters[i];
-        if (p->px && p->w == cw && p->h == ch && !strcmp(p->id, it->id) &&
+        if (p->px && p->w == cw && p->h == ch && p->fit == fit && !strcmp(p->id, it->id) &&
             !strncmp(p->tag, it->image_tag, sizeof(p->tag) - 1)) {
             p->stamp = ++g_poster_clock;
             return p;
@@ -2262,7 +2304,8 @@ static PosterSlot *poster_get(FBDev *fb, const EbItem *it, int cw, int ch)
     g_poster_decodes_left--;
     uint8_t *src = load_image_keep(cpath, &sw, &sh);
     if (!src) { g_poster_miss_retry_at = now_sec() + 0.3; return NULL; }
-    uint8_t *px = poster_scale(src, sw, sh, cw, ch, par_correction(fb));
+    uint8_t *px = fit ? poster_scale_fit(src, sw, sh, cw, ch, par_correction(fb))
+                      : poster_scale(src, sw, sh, cw, ch, par_correction(fb));
     stbi_image_free(src);
     if (!px) return NULL;
     uint8_t *dim = malloc((size_t)cw * ch * 4);
@@ -2277,10 +2320,20 @@ static PosterSlot *poster_get(FBDev *fb, const EbItem *it, int cw, int ch)
     free(lru->px); free(lru->dim);
     snprintf(lru->id, sizeof(lru->id), "%s", it->id);
     snprintf(lru->tag, sizeof(lru->tag), "%s", it->image_tag);
-    lru->w = cw; lru->h = ch;
+    lru->w = cw; lru->h = ch; lru->fit = fit;
     lru->px = px; lru->dim = dim;
     lru->stamp = ++g_poster_clock;
     return lru;
+}
+
+static PosterSlot *poster_get(FBDev *fb, const EbItem *it, int cw, int ch)
+{
+    return poster_lookup(fb, it, cw, ch, 0);
+}
+
+static PosterSlot *poster_get_fit(FBDev *fb, const EbItem *it, int cw, int ch)
+{
+    return poster_lookup(fb, it, cw, ch, 1);
 }
 
 /* "1h 42m" / "42m" */
@@ -2558,11 +2611,25 @@ static void draw_browse(FBDev *fb)
                          THEME_GREEN, 235);
     }
 
+    /* A channel list carries each channel's logo at the left of its row. */
+    int chan_logo_h = ROW_H - 8;
+    int chan_logo_w = (int)(chan_logo_h * 16.0 / 9.0 * par_correction(fb) + 0.5);
+    int chan_rows = g_item_count > 0 && g_items[0].type == EB_TYPE_CHANNEL;
+    g_poster_decodes_left = POSTER_DECODES_PER_DRAW;
+
     for (int i = g_scroll; i < end; i++) {
         int row = i - g_scroll;
         int y   = SAFE_Y + 24 + row * ROW_H;
         int is_sel = (i == g_sel);
         EbItem *it = &g_items[i];
+        int text_x = SAFE_X;
+        if (chan_rows) {
+            int lx = SAFE_X, ly = y - 2;
+            PosterSlot *ps = poster_get_fit(fb, it, chan_logo_w, chan_logo_h);
+            if (ps) fb_blit_opaque(fb, ps->px, chan_logo_w, chan_logo_h, lx, ly, chan_logo_w, chan_logo_h);
+            else    fb_fill_rect_alpha(fb, lx, ly, chan_logo_w, chan_logo_h, 0x26, 0x26, 0x26, 255);
+            text_x = SAFE_X + chan_logo_w + 10;
+        }
 
         char line1[280];
         if (it->year[0] &&
@@ -2573,7 +2640,7 @@ static void draw_browse(FBDev *fb)
             snprintf(line1, sizeof(line1), "%s  %s", it->year, it->name);
         else
             snprintf(line1, sizeof(line1), "%s%s", type_folder_icon(it->type), it->name);
-        truncate_to_width(fb, line1, 1, row_max_w);
+        truncate_to_width(fb, line1, 1, row_max_w - (text_x - SAFE_X));
 
         /* Album: year + track count instead of a runtime — there's no
          * single "duration" for a whole album. Track: just its own
@@ -2634,7 +2701,7 @@ static void draw_browse(FBDev *fb)
                 snprintf(line2, sizeof(line2), "%d min", minutes);
             }
         }
-        truncate_to_width(fb, line2, 1, row_max_w);
+        truncate_to_width(fb, line2, 1, row_max_w - (text_x - SAFE_X));
 
         /* The highlight itself is drawn above, before this loop — all that is
          * left per row is which colour its text takes. */
@@ -2644,13 +2711,13 @@ static void draw_browse(FBDev *fb)
         if (badge) truncate_to_width(fb, line1, 1, row_max_w - badge_w);
 
         if (is_sel) {
-            draw_text(fb, SAFE_X, y, line1, 1, COL_SEL_FG);
+            draw_text(fb, text_x, y, line1, 1, COL_SEL_FG);
             /* Secondary text on the green plate goes pale rather than its
              * normal colour, which would vanish into the green. */
-            if (line2[0]) draw_text(fb, SAFE_X, y + 11, line2, 1, 0xE0, 0xF4, 0xDE);
+            if (line2[0]) draw_text(fb, text_x, y + 11, line2, 1, 0xE0, 0xF4, 0xDE);
         } else {
-            draw_text(fb, SAFE_X, y, line1, 1, COL_ITEM);
-            if (line2[0]) draw_text(fb, SAFE_X, y + 11, line2, 1, l2r, l2g, l2b);
+            draw_text(fb, text_x, y, line1, 1, COL_ITEM);
+            if (line2[0]) draw_text(fb, text_x, y + 11, line2, 1, l2r, l2g, l2b);
         }
         if (badge)
             theme_check_badge(fb, SAFE_X + row_max_w - badge_w + 6, y - 1, 9);
@@ -4336,6 +4403,57 @@ static int player_handle_input(FBDev *fb, int inp, double loop_now)
     return PLAYER_FRAME_PLAYING;
 }
 
+/* Opening a channel can take the server many seconds (it tunes it first),
+ * so it runs on a thread while a "Tuning in" card and the spinner show —
+ * blocking the main thread silently there read as a freeze. */
+typedef struct {
+    char id[EB_ID_LEN];
+    char msid[EB_ID_LEN + 16];
+    char lsid[96];
+    int  ok;
+    volatile int done;
+} LiveOpenJob;
+
+static void *live_open_thread(void *arg)
+{
+    LiveOpenJob *j = arg;
+    j->ok = eb_live_open(&g_cfg, j->id, j->msid, sizeof(j->msid), j->lsid, sizeof(j->lsid));
+    j->done = 1;
+    return NULL;
+}
+
+static int live_open_with_spinner(FBDev *fb, const char *item_id)
+{
+    LiveOpenJob job;
+    memset(&job, 0, sizeof(job));
+    snprintf(job.id, sizeof(job.id), "%s", item_id);
+    pthread_t t;
+    if (pthread_create(&t, NULL, live_open_thread, &job) != 0)
+        live_open_thread(&job);
+    else {
+        char msg[EB_NAME_LEN + 16];
+        snprintf(msg, sizeof(msg), "Tuning in to %s", g_info_item.name);
+        int frame = 0;
+        while (!job.done) {
+            theme_backdrop(fb);
+            int w = fb->width - 2 * SAFE_X - 40;
+            if (w > 420) w = 420;
+            int h = 64, x = (fb->width - w) / 2, y = (fb->height - h) / 2;
+            theme_dialog(fb, x, y, w, h, "Live TV");
+            truncate_to_width(fb, msg, 1, w - 24);
+            draw_text(fb, (fb->width - text_width(fb, msg, 1)) / 2, y + 40, msg, 1, COL_ITEM);
+            draw_spinner_frame(fb, frame++);
+            fb_flip(fb);
+            usleep(SPINNER_BLINK_MS * 1000);
+        }
+        pthread_join(t, NULL);
+    }
+    if (!job.ok) return 0;
+    snprintf(g_info_item.media_source_id, sizeof(g_info_item.media_source_id), "%s", job.msid);
+    snprintf(g_live_stream_id, sizeof(g_live_stream_id), "%s", job.lsid);
+    return 1;
+}
+
 static void play(FBDev *fb, const char *item_id, double offset_secs)
 {
     g_seek_accum = 0.0;
@@ -4368,10 +4486,14 @@ static void play(FBDev *fb, const char *item_id, double offset_secs)
     }
     if (playing_live()) {
         start_ticks = 0;
-        if (!eb_live_open(&g_cfg, item_id, g_info_item.media_source_id,
-                          sizeof(g_info_item.media_source_id),
-                          g_live_stream_id, sizeof(g_live_stream_id)))
+        if (!live_open_with_spinner(fb, item_id)) {
+            /* Nothing to play: no player is started, so the playback loop
+             * sees it as already ended and returns to the channel list,
+             * where the banner says why. */
             eb_log_line("play: live stream did not open");
+            banner_enqueue("Couldn't tune in to that channel - try another");
+            return;
+        }
     }
 
     char url[1024];
@@ -4692,8 +4814,14 @@ vf_done:;
         }
         dup2(pfd[0], 0);
         close(pfd[0]); close(pfd[1]);
+        /* With DEBUGLOG on, mplayer's own messages go to a log beside
+         * debug.log, so a stream it refuses can be diagnosed; otherwise
+         * nowhere. Its stdout is the slave-mode chatter, never wanted. */
         int devnull = open("/dev/null", O_WRONLY);
-        if (devnull >= 0) { dup2(devnull, 1); dup2(devnull, 2); close(devnull); }
+        int errlog = g_cfg.debug_log
+            ? open("/media/fat/misteremby/mplayer.log", O_WRONLY | O_CREAT | O_TRUNC, 0644) : -1;
+        if (devnull >= 0) { dup2(devnull, 1); dup2(errlog >= 0 ? errlog : devnull, 2); close(devnull); }
+        if (errlog >= 0) close(errlog);
         nice(-5);
         /* Built as an array (execvp) rather than the execlp literal it used
          * to be solely so the -sub/-subdelay pair can be conditional. */
@@ -6121,13 +6249,20 @@ int main(int argc, char **argv)
 
             if (g_confirm_exit) {
                 /* Dialog eats all other input while open. */
-                if (inp & INP_A) { g_running = 0; break; }
-                if (inp & INP_B) { g_confirm_exit = 0; draw_browse(&fb); input_drain(); }
+                if (inp & (INP_LEFT | INP_RIGHT)) {
+                    g_exit_sel = !g_exit_sel;
+                    draw_browse(&fb);
+                    draw_confirm_exit(&fb);
+                    break;
+                }
+                if ((inp & INP_A) && g_exit_sel == 0) { g_running = 0; break; }
+                if (inp & (INP_A | INP_B)) { g_confirm_exit = 0; draw_browse(&fb); input_drain(); }
                 break;
             }
             if (inp & INP_B) {
                 if (!pop_frame()) {
                     g_confirm_exit = 1;
+                    g_exit_sel = 0;
                     draw_browse(&fb);
                     draw_confirm_exit(&fb);
                     input_drain();
