@@ -1853,10 +1853,22 @@ static void draw_top_bar(FBDev *fb, const char *title)
 /* Drawn on top of whatever's already on screen (see the STATE_BROWSE input
  * handling) — doesn't clear or redraw the browse screen underneath itself,
  * same layering as the subtitle submenu's own overlay. */
-static void draw_confirm_exit(FBDev *fb)
+/* capture=1 when the dialog opens: the screen behind (already drawn into
+ * fb->back) is dimmed and kept, so moving between the buttons only redraws
+ * them over that copy. Redrawing the browse screen each time flipped it
+ * undimmed for a frame, which showed as the screen jittering. */
+static uint8_t *g_exit_bg = NULL;
+static void draw_confirm_exit(FBDev *fb, int capture)
 {
-    /* Dim whatever is behind, then an Emby dialog with its two buttons. */
-    fb_fill_rect_alpha(fb, 0, 0, fb->width, fb->height, 0, 0, 0, 150);
+    size_t sz = (size_t)fb->stride * fb->height;
+    if (capture || !g_exit_bg) {
+        /* Dim whatever is behind, then an Emby dialog with its two buttons. */
+        fb_fill_rect_alpha(fb, 0, 0, fb->width, fb->height, 0, 0, 0, 150);
+        if (!g_exit_bg) g_exit_bg = malloc(sz);
+        if (g_exit_bg) memcpy(g_exit_bg, fb->back, sz);
+    } else {
+        memcpy(fb->back, g_exit_bg, sz);
+    }
     const char *msg = "Leave MiSTerEmby?";
     int w = 260, h = 92;
     int x = (fb->width - w) / 2, y = (fb->height - h) / 2;
@@ -6343,8 +6355,7 @@ int main(int argc, char **argv)
                 /* Dialog eats all other input while open. */
                 if (inp & (INP_LEFT | INP_RIGHT)) {
                     g_exit_sel = !g_exit_sel;
-                    draw_browse(&fb);
-                    draw_confirm_exit(&fb);
+                    draw_confirm_exit(&fb, 0);
                     break;
                 }
                 if ((inp & INP_A) && g_exit_sel == 0) { g_running = 0; break; }
@@ -6356,7 +6367,7 @@ int main(int argc, char **argv)
                     g_confirm_exit = 1;
                     g_exit_sel = 0;
                     draw_browse(&fb);
-                    draw_confirm_exit(&fb);
+                    draw_confirm_exit(&fb, 1);
                     input_drain();
                     break;
                 }
