@@ -3236,12 +3236,25 @@ static double   g_vu_level_l = 0.0, g_vu_level_r = 0.0;   /* attack/decay state,
  * resolution can be tried on hardware by editing emby.conf instead of
  * rebuilding and reflashing per data point. Defaults to the values above when
  * the config says nothing. */
+static int playing_live(void);
+
 static EbStreamProfile stream_profile(void)
 {
     EbStreamProfile p;
     p.max_width     = g_cfg.profile_width;
     p.max_height    = g_cfg.profile_height;
     p.video_bitrate = g_cfg.profile_bitrate;
+    /* Live TV is converted as it airs, so the server has to keep up in
+     * real time with no buffer to fall back on: a NAS without hardware
+     * transcoding was measured at only 1.2x real time on a 720p channel.
+     * 640 wide (the most the MiSTer's 640-wide output shows anyway) and a
+     * lower bitrate give it less to encode. A smaller profile set in
+     * emby.conf still wins. */
+    if (playing_live()) {
+        if (p.max_width  > 640)    p.max_width  = 640;
+        if (p.max_height > 480)    p.max_height = 480;
+        if (p.video_bitrate > 4000000) p.video_bitrate = 4000000;
+    }
     return p;
 }
 
