@@ -947,6 +947,11 @@ int eb_config_load(EbConfig *cfg)
             continue;
         }
 
+        if (!strcasecmp(line, "CINEMA_MODE")) {
+            cfg->cinema_mode = 1;
+            continue;
+        }
+
         if (!strcasecmp(line, "TRANSCODE_ALWAYS")) {
             cfg->transcode_always = 1;
             continue;
@@ -1786,6 +1791,20 @@ int eb_list_nextup(const EbConfig *cfg, EbItem *out, int max, int64_t *total_out
     if (total_out && *total_out > 0) *total_out -= (n - kept);
     eb_response_free(&r);
     return kept;
+}
+
+int eb_list_intros(const EbConfig *cfg, const char *item_id, EbItem *out, int max)
+{
+    char safe_id[EB_ID_LEN];
+    eb_sanitize_id(item_id, safe_id, sizeof(safe_id));
+    char path[160];
+    snprintf(path, sizeof(path), "/Users/%s/Items/%s/Intros", cfg->user_id, safe_id);
+
+    EbResponse r;
+    if (!eb_fetch(cfg, path, &r)) return -1;
+    int n = parse_item_list(&r.doc, out, max);
+    eb_response_free(&r);
+    return n;
 }
 
 int eb_list_collections(const EbConfig *cfg, EbItem *out, int max, int64_t *total_out)

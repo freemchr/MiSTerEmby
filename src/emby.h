@@ -247,6 +247,9 @@ typedef struct {
      * untouched, even when eb_direct_stream_codec says it could. For
      * troubleshooting a file that plays badly direct. */
     int  transcode_always;
+    /* "CINEMA_MODE" config line: play the trailers Emby's Cinema Mode picks
+     * (eb_list_intros) before a film started from the beginning. */
+    int  cinema_mode;
 } EbConfig;
 
 /* One in-flight Emby Connect PIN request (emby.media/pin). */
@@ -507,6 +510,11 @@ int eb_list_seasons(const EbConfig *cfg, const char *series_id, EbItem *out, int
  * nothing to treat both the same way. */
 int eb_list_episodes(const EbConfig *cfg, const char *series_id, const char *season_id,
                       int start_index, EbItem *out, int max, int64_t *total_out);
+
+/* The intros Emby's Cinema Mode has chosen for item_id (trailers, plus any
+ * custom intros configured on the server), in play order. Empty when the
+ * server has none to offer. Returns the count, or -1 on failure. */
+int eb_list_intros(const EbConfig *cfg, const char *item_id, EbItem *out, int max);
 
 /* Fetches full details for a single item — Overview, People (cast), and the
  * Backdrop/Logo image tags — that eb_list_items() deliberately omits to keep

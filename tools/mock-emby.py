@@ -447,6 +447,12 @@ class Handler(BaseHTTPRequestHandler):
                    if ITEMS[i]["UserData"]["PlaybackPositionTicks"] > 0][:12]
             return self._send(self._query_result(ids, query))
 
+        m = re.match(r"^/Users/%s/Items/([^/?]+)/Intros$" % USER_ID, path)
+        if m:
+            # Cinema Mode: one trailer ahead of every movie.
+            trailer = base_item("trailer-0", "Mock Trailer", "Trailer", RunTimeTicks=120 * 10_000_000)
+            return self._send({"Items": [trailer], "TotalRecordCount": 1})
+
         m = re.match(r"^/Users/%s/Items/([^/?]+)$" % USER_ID, path)
         if m and m.group(1) in ITEMS:
             item = dict(ITEMS[m.group(1)])

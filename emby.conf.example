@@ -63,6 +63,15 @@ PAL
 # 480x270@8000000
 
 
+# ── Cinema Mode ────────────────────────────────────────────────────────────
+# Add a line containing just CINEMA_MODE to play trailers before a film you
+# start from the beginning, like Emby's own apps do. Which trailers (and any
+# custom intros) is decided by the Emby server's Cinema Mode settings. UP
+# skips a trailer; A stops.
+#
+# CINEMA_MODE
+
+
 # ── Direct streaming ───────────────────────────────────────────────────────
 # SD files in a codec the MiSTer decodes easily (DivX/Xvid MPEG-4, MPEG-1,
 # progressive MPEG-2) are streamed with their video untouched: Emby only

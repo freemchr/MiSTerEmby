@@ -3843,6 +3843,20 @@ static void seek_accumulate(double delta, double now)
  * frame ended inside the submenu-open path, which must skip the caller's
  * end-of-loop work (a pending accumulated seek must not fire under the
  * just-opened menu, exactly as the original `continue` guaranteed). */
+/* ── Cinema Mode ───────────────────────────────────────────────────────────
+ * Intros (trailers) queued ahead of a film. While one plays, g_info_item
+ * holds the intro and g_feature_item holds the film, which is swapped back
+ * in once the queue runs out or the user stops. g_intro_pos < 0 means no
+ * intro is playing. */
+#define INTRO_MAX 4
+static EbItem g_feature_item;
+static EbItem g_intros[INTRO_MAX];
+static int    g_intro_count = 0;
+static int    g_intro_pos   = -1;
+/* Whether the last PLAYER_FRAME_ENDED was the user stopping (A), rather
+ * than the title reaching its end or a trailer being skipped. */
+static int    g_end_by_user = 0;
+
 #define PLAYER_FRAME_ENDED   0
 #define PLAYER_FRAME_PLAYING 1
 #define PLAYER_FRAME_HANDLED 2
@@ -3869,6 +3883,7 @@ static int player_handle_input(FBDev *fb, int inp, double loop_now)
         g_info_item.played = watched;
         g_info_item.resume_ticks = watched ? 0 : (int64_t)(pos * 10000000.0);
         player_stop();
+        g_end_by_user = 1;
         eb_log_line("play: stopped by user at %.0fs, watched=%d", pos, watched);
         return PLAYER_FRAME_ENDED;
     } else if (g_paused) {
@@ -3894,6 +3909,25 @@ static int player_handle_input(FBDev *fb, int inp, double loop_now)
         draw_paused(fb, g_info_item.name, seek_pending_target());
     } else {
         if (inp & INP_SELECT) { submenu_open(fb); draw_submenu(fb); input_drain(); return PLAYER_FRAME_HANDLED; }
+
+        /* A Cinema Mode trailer: UP skips straight to the next one (or the
+         * film), the same key the intro/credits skip below uses. */
+        if (g_intro_pos >= 0) {
+            static double trailer_prompt_next = 0.0;
+            if (g_seek_fire_at == 0.0 && loop_now >= trailer_prompt_next) {
+                osd_flash("UP: Skip trailer", 0);
+                trailer_prompt_next = loop_now + 1.0;
+            }
+            if (inp & INP_UP) {
+                double pos = play_position();
+                eb_report_stopped(&g_cfg, g_info_item.id, g_play_session_id,
+                                  (int64_t)(pos * 10000000.0), 0);
+                player_stop();
+                g_end_by_user = 0;
+                eb_log_line("play: skipped trailer %d at %.0fs", g_intro_pos + 1, pos);
+                return PLAYER_FRAME_ENDED;
+            }
+        }
 
         /* Skip intro / credits, from Emby's chapter markers. The prompt is
          * mplayer's own OSD text (see osd_flash — an app-drawn overlay
@@ -5965,7 +5999,26 @@ int main(int argc, char **argv)
                  * picker can show a meaningful "current" row before any
                  * choice has been made. */
                 g_current_audio_index = default_audio_index();
-                play(&fb, g_info_item.id, offset);
+                /* Cinema Mode: from the beginning of a film, trailers first. */
+                g_intro_count = 0;
+                g_intro_pos = -1;
+                if (g_cfg.cinema_mode && offset <= 0.0 && g_info_item.type == EB_TYPE_MOVIE) {
+                    EbItem found[INTRO_MAX];
+                    int n = eb_list_intros(&g_cfg, g_info_item.id, found, INTRO_MAX);
+                    for (int i = 0; i < n; i++)
+                        if (eb_get_item_details(&g_cfg, found[i].id, &g_intros[g_intro_count]))
+                            g_intro_count++;
+                    eb_log_line("play: cinema mode, %d intro%s", g_intro_count,
+                                g_intro_count == 1 ? "" : "s");
+                }
+                if (g_intro_count > 0) {
+                    g_feature_item = g_info_item;
+                    g_intro_pos = 0;
+                    g_info_item = g_intros[0];
+                    play(&fb, g_info_item.id, 0.0);
+                } else {
+                    play(&fb, g_info_item.id, offset);
+                }
                 input_drain();
             } else if ((inp & INP_SELECT) && g_info_item.resume_ticks > 0 && !g_info_item.played) {
                 info_assets_free();
@@ -5982,7 +6035,29 @@ int main(int argc, char **argv)
         case STATE_PLAYING: {
             int r = player_handle_input(&fb, inp, loop_now);
             if (r == PLAYER_FRAME_HANDLED) continue;
+            if (r == PLAYER_FRAME_ENDED && g_intro_pos >= 0) {
+                /* A trailer ended. Next trailer, or the film — unless the
+                 * user stopped, which abandons the film too. */
+                int stopped = g_end_by_user;
+                g_end_by_user = 0;
+                if (!stopped && g_intro_pos + 1 < g_intro_count) {
+                    g_intro_pos++;
+                    g_info_item = g_intros[g_intro_pos];
+                    play(&fb, g_info_item.id, 0.0);
+                    break;
+                }
+                g_info_item = g_feature_item;
+                g_intro_pos = -1;
+                if (!stopped) {
+                    g_current_sub_index = -1;
+                    g_burned_in_sub_index = -1;
+                    g_current_audio_index = default_audio_index();
+                    play(&fb, g_info_item.id, 0.0);
+                    break;
+                }
+            }
             if (r == PLAYER_FRAME_ENDED) {
+                g_end_by_user = 0;
                 playing = 0;
                 state = STATE_BROWSE;
                 refetch_frame_keep_selection(&fb);
