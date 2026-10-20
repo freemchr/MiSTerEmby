@@ -560,7 +560,7 @@ static void info_assets_load(FBDev *fb, const EbItem *list_item, int *spinner_fr
  * means stop+restart with a new startTimeTicks, which has a few seconds of
  * reconnect latency worth covering with feedback) ───────────────────────── */
 
-#define SPINNER_BLINK_MS 350
+#define SPINNER_BLINK_MS 120   /* one step of the ring per tick */
 
 typedef struct { int x, y; } SpinnerSamplePt;
 
@@ -1728,7 +1728,7 @@ static int draw_clock_color(FBDev *fb, uint8_t r, uint8_t g, uint8_t b)
     localtime_r(&now_t, &now_tm);
     char clock_buf[8];
     snprintf(clock_buf, sizeof(clock_buf), "%02d:%02d", now_tm.tm_hour, now_tm.tm_min);
-    int clock_right = fb->width - SPINNER_SIZE - SPINNER_MARGIN - 8;
+    int clock_right = fb->width - spinner_width(fb) - SPINNER_MARGIN - 8;
     int clock_x = clock_right - text_width(fb, clock_buf, 1);
     draw_text(fb, clock_x, SAFE_Y + 4, clock_buf, 1, r, g, b);
     return clock_x;
@@ -1761,16 +1761,18 @@ static void draw_top_bar(FBDev *fb, const char *title)
     theme_header(fb, SAFE_Y);
     int clock_x = draw_clock(fb);
 
+    /* The home screen's title is the app's own name: the logo's lettering,
+     * filling the bar. Everywhere else, the logo's monitor and the screen
+     * title. */
+    if (!strcmp(title, "MiSTerEmby")) {
+        theme_brand_wordmark(fb, SAFE_X, 3, SAFE_Y + 12);
+        return;
+    }
     int logo_h = 16;   /* the title's own height (2x font) */
     int logo_w = theme_logo(fb, SAFE_X, SAFE_Y, logo_h);
 
     int title_x0 = SAFE_X + logo_w + 8;
     int title_x1 = clock_x - 12;
-    if (!strcmp(title, "MiSTerEmby")) {
-        draw_text(fb, title_x0, SAFE_Y, "MiSTer", 2, COL_TITLE);
-        draw_text(fb, title_x0 + text_width(fb, "MiSTer", 2), SAFE_Y, "Emby", 2, THEME_GREEN);
-        return;
-    }
     int title_w  = text_width(fb, title, 2);
     if (strcmp(title, g_marquee_title) != 0) {
         strncpy(g_marquee_title, title, sizeof(g_marquee_title) - 1);

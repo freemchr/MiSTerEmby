@@ -42,6 +42,10 @@ int theme_logo(FBDev *fb, int x, int y, int h);
 /* The full MiSTerEmby logo, h rows tall, centred on cx. Returns its width. */
 int theme_brand_logo(FBDev *fb, int cx, int y, int h);
 
+/* The logo's "MiSTer Emby" lettering alone, h rows tall, left edge at x.
+ * Returns its width. */
+int theme_brand_wordmark(FBDev *fb, int x, int y, int h);
+
 /* Rounded rectangle fill. radius is in screen rows; the horizontal radius
  * is widened by the panel's pixel aspect so corners read round, not oval. */
 void theme_round_rect(FBDev *fb, int x, int y, int w, int h, int radius,

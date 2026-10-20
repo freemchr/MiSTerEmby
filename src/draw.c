@@ -1,6 +1,7 @@
 /* Drawing primitives — bitmap-font text rendering and the aspect-corrected
  * blit. Extracted verbatim from main.c; see draw.h for the interface. */
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include "draw.h"
@@ -214,19 +215,48 @@ void blit_fit_centered(FBDev *fb, const uint8_t *src, int sw, int sh,
     fb_blit(fb, src, sw, sh, cx - dw / 2, cy - dh / 2, dw, dh, alpha);
 }
 
+int spinner_width(FBDev *fb)
+{
+    return (int)(SPINNER_SIZE * par_correction(fb) + 0.5);
+}
+
 void draw_spinner_frame(FBDev *fb, int frame_idx)
 {
-    int dx = fb->width - SPINNER_SIZE - SPINNER_MARGIN;
+    /* Emby's look: a ring of green dots chasing round a white play
+     * triangle, on a dark plate so it reads over artwork. Round on screen —
+     * widths go through par_correction like every other shape here. */
+    double par = par_correction(fb);
+    int w  = spinner_width(fb);
+    int dx = fb->width - w - SPINNER_MARGIN;
     int dy = SPINNER_MARGIN;
-    /* Four green quadrant blocks, one lit per frame, chasing clockwise —
-     * a blocky nod to Emby's green ring spinner. */
-    fb_fill_rect_alpha(fb, dx, dy, SPINNER_SIZE, SPINNER_SIZE, 0x10, 0x10, 0x10, 255);
-    int h = SPINNER_SIZE / 2;
-    static const int qx[4] = { 0, 1, 1, 0 }, qy[4] = { 0, 0, 1, 1 };
-    for (int q = 0; q < 4; q++) {
-        int lit = (frame_idx % 4) == q;
-        fb_fill_rect_alpha(fb, dx + qx[q] * h + 1, dy + qy[q] * h + 1, h - 2, h - 2,
-                           lit ? 0x52 : 0x2A, lit ? 0xB5 : 0x4A, lit ? 0x4B : 0x28, 255);
+    fb_fill_rect_alpha(fb, dx - 2, dy - 1, w + 4, SPINNER_SIZE + 2, 0x10, 0x10, 0x10, 220);
+
+    double cx = dx + w / 2.0, cy = dy + SPINNER_SIZE / 2.0;
+    double r  = SPINNER_SIZE / 2.0 - 2.0;
+    int dot_h = SPINNER_SIZE >= 16 ? 3 : 2;
+    int dot_w = (int)(dot_h * par + 0.5);
+    for (int k = 0; k < 8; k++) {
+        double a = k * (M_PI / 4.0) - M_PI / 2.0;          /* 12 o'clock first, clockwise */
+        int age = ((frame_idx % 8) - k + 8) % 8;           /* 0 = the leading dot */
+        uint8_t r8, g8, b8;
+        if      (age == 0) { r8 = 0x6C; g8 = 0xD8; b8 = 0x64; }   /* bright Emby green */
+        else if (age == 1) { r8 = 0x52; g8 = 0xB5; b8 = 0x4B; }
+        else if (age == 2) { r8 = 0x3A; g8 = 0x7E; b8 = 0x35; }
+        else               { r8 = 0x2A; g8 = 0x4A; b8 = 0x28; }
+        int px = (int)(cx + cos(a) * r * par - dot_w / 2.0 + 0.5);
+        int py = (int)(cy + sin(a) * r - dot_h / 2.0 + 0.5);
+        fb_fill_rect_alpha(fb, px, py, dot_w, dot_h, r8, g8, b8, 255);
+    }
+
+    /* Play triangle, pointing right, a hair right of centre. */
+    int th = SPINNER_SIZE / 2 - 1;      /* 7 rows: odd, so it has a single-row tip */
+    double tw = th * 0.75 * par;
+    double tx0 = cx - tw * 0.42;
+    int ty0 = (int)(cy - th / 2.0 + 0.5);
+    for (int row = 0; row < th; row++) {
+        double v = fabs((row + 0.5) - th / 2.0) / (th / 2.0);
+        int len = (int)(tw * (1 - v) + 0.5);
+        if (len > 0) fb_fill_rect_alpha(fb, (int)(tx0 + 0.5), ty0 + row, len, 1, 0xFF, 0xFF, 0xFF, 255);
     }
 }
 

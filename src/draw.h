@@ -51,12 +51,15 @@ double par_correction(FBDev *fb);
 
 /* Corner loading indicator. SPINNER_SIZE/SPINNER_MARGIN are public because
  * the top bar's clock positions itself clear of the spinner's square. */
-#define SPINNER_SIZE   14
+#define SPINNER_SIZE   16   /* rows; its width is spinner_width() */
 #define SPINNER_MARGIN 10
 
-/* Simple blinking square in the top-right corner — a GIF mascot animation
- * was tried first but wasn't worth the decode/ghosting complexity for what
- * is just a "something's loading" cue. */
+/* The spinner's on-screen width: SPINNER_SIZE widened by par_correction so
+ * it's round. */
+int spinner_width(FBDev *fb);
+
+/* Emby-style loading indicator in the top-right corner: a ring of green dots
+ * chasing round a white play triangle, one step per frame_idx. */
 void draw_spinner_frame(FBDev *fb, int frame_idx);
 
 /* Aspect-preserving blit of src into a max_w x max_h box centered on

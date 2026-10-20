@@ -205,6 +205,7 @@ typedef struct {
 
 static BrandImage brand_logo = { logo_png, (int)sizeof(logo_png), NULL, 0, 0, NULL, 0, 0 };
 static BrandImage brand_icon = { icon_png, (int)sizeof(icon_png), NULL, 0, 0, NULL, 0, 0 };
+static BrandImage brand_word = { wordmark_png, (int)sizeof(wordmark_png), NULL, 0, 0, NULL, 0, 0 };
 
 /* Area-average RGBA downscale, weighting colour by alpha so the transparent
  * edge doesn't bleed dark fringes into the outline. */
@@ -265,6 +266,11 @@ int theme_brand_logo(FBDev *fb, int cx, int y, int h)
     if (!brand_decode(&brand_logo)) return 0;
     int w = (int)((double)brand_logo.sw / brand_logo.sh * h * par_correction(fb) + 0.5);
     return brand_draw(fb, &brand_logo, cx - w / 2, y, h);
+}
+
+int theme_brand_wordmark(FBDev *fb, int x, int y, int h)
+{
+    return brand_draw(fb, &brand_word, x, y, h);
 }
 
 /* The logo's monitor on its own: what the top bar and dialog headers show,
