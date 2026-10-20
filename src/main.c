@@ -62,7 +62,6 @@
 /* UI click/confirm clips. Same directory screenshot.c's shutter.wav lives in,
  * and already deployed by the Makefile and copied by the in-app updater. */
 #define SFX_DIR      "/media/fat/misteremby/sfx"
-#define COVER_CACHE_DIR "/media/fat/misteremby/covercache"
 #define COVER_TMP_BG   "/tmp/misteremby_cover_bg.img"
 #define CRASH_LOG    "/media/fat/misteremby/crash.log"
 /* mplayer's -af export writes live PCM samples to this mmap'd file for the
@@ -1519,7 +1518,7 @@ static void cover_cache_path(const char *item_id, const char *tag, char *out, si
         safe[j++] = isalnum((unsigned char)c) ? c : '_';
     }
     safe[j] = '\0';
-    snprintf(out, outsz, COVER_CACHE_DIR "/%s_w%d.img", safe, BROWSE_COVER_DL_W);
+    snprintf(out, outsz, "%s/%s_w%d.img", cover_cache_dir(), safe, BROWSE_COVER_DL_W);
 }
 
 /* Downloads one cover into the SD cache if not already there. Downloads to a
@@ -1534,7 +1533,7 @@ static void cover_fetch_to_cache(const char *image_item_id, const char *tag,
     cover_cache_path(item_id, tag, cpath, sizeof(cpath));
     struct stat st;
     if (stat(cpath, &st) == 0 && st.st_size > 0) return;   /* already cached */
-    mkdir(COVER_CACHE_DIR, 0755);   /* ensure the dir exists for tmp + final */
+    mkdir(cover_cache_dir(), 0755);   /* ensure the dir exists for tmp + final */
     char tmp[176];
     snprintf(tmp, sizeof(tmp), "%s.tmp", cpath);
     if (eb_download_item_image(&g_cfg, image_item_id, "Primary", tag,
@@ -1602,8 +1601,8 @@ static void browse_cover_load(void)
 static void *cache_sweep_thread(void *arg)
 {
     (void)arg;
-    int n  = cache_sweep_superseded(COVER_CACHE_DIR, ".img", "_w");
-    n     += cache_sweep_superseded(GRID_CACHE_DIR,  ".dat", "_w");
+    int n  = cache_sweep_superseded(cover_cache_dir(), ".img", "_w");
+    n     += cache_sweep_superseded(grid_cache_dir(),  ".dat", "_w");
     /* Only when it did something — on every launch after the first there is
      * nothing to find, and a line saying so each time is noise. */
     if (n > 0) eb_log_line("cache: reclaimed %d entries from a superseded key", n);
@@ -1668,7 +1667,7 @@ static void hero_cache_path(const char *item_id, const char *tag, char *out, siz
         safe[j++] = isalnum((unsigned char)c) ? c : '_';
     }
     safe[j] = '\0';
-    snprintf(out, outsz, COVER_CACHE_DIR "/h%s_w%d.img", safe, HERO_DL_W);
+    snprintf(out, outsz, "%s/h%s_w%d.img", cover_cache_dir(), safe, HERO_DL_W);
 }
 
 /* Mirror of cover_fetch_to_cache — same tmp-then-rename inside the cache dir
@@ -1682,7 +1681,7 @@ static void hero_fetch_to_cache(const char *img_id, const char *tag, const char 
 
     char tmp[192];
     snprintf(tmp, sizeof(tmp), "%s.tmp", cpath);
-    mkdir(COVER_CACHE_DIR, 0755);
+    mkdir(cover_cache_dir(), 0755);
     if (eb_download_item_image(&g_cfg, img_id, "Backdrop/0", tag, HERO_DL_W, tmp)) {
         if (rename(tmp, cpath) != 0) unlink(tmp);
     } else {
@@ -2153,8 +2152,369 @@ static void draw_browse_carousel(FBDev *fb)
     fb_flip(fb);
 }
 
+/* ── poster grid ───────────────────────────────────────────────────────────
+ * Movie, TV and collection lists draw as a wall of posters, and a season's
+ * episodes as a row of stills, the way Emby's TV apps lay them out. SELECT
+ * swaps back to the text list.
+ *
+ * Kept within what this CPU does comfortably: art only ever comes off the SD
+ * cover cache (the same files the list's cover panel uses, filled by
+ * cover_prefetch_thread), is scaled ONCE into a cell-sized buffer, and a
+ * dimmed copy is baked alongside it, so a redraw is plain opaque copies with
+ * no per-pixel blending (see fb_blit_opaque on why that matters). At most
+ * POSTER_DECODES_PER_DRAW new images are decoded per redraw, so a screen of
+ * freshly cached art fills in over a few frames instead of stalling one. */
+enum { GRID_NONE, GRID_POSTER, GRID_STILL };
+
+/* SELECT inside a library: the plain list instead of the grid. */
+static int g_grid_list_mode = 0;
+/* First visible grid row, in absolute rows (index / cols). */
+static int g_grid_top = 0;
+
+/* What the current list would draw as, ignoring g_grid_list_mode: posters
+ * when every row is a film, series, season or folder, stills when every row
+ * is an episode or music video, otherwise the list (music, channels, mixed
+ * home rows). */
+static int browse_grid_kind_raw(void)
+{
+    BrowseFrame *f = &g_stack[g_stack_depth - 1];
+    if (g_item_count == 0) return GRID_NONE;
+    if (f->kind == FRAME_VIEWS || f->kind == FRAME_RESUME || f->kind == FRAME_NEXTUP ||
+        f->kind == FRAME_LIVETV || f->kind == FRAME_RECORDINGS)
+        return GRID_NONE;
+    int posters = 0, stills = 0;
+    for (int i = 0; i < g_item_count; i++) {
+        switch (g_items[i].type) {
+        case EB_TYPE_MOVIE: case EB_TYPE_SERIES: case EB_TYPE_SEASON: case EB_TYPE_FOLDER:
+            posters++; break;
+        case EB_TYPE_EPISODE: case EB_TYPE_MUSIC_VIDEO:
+            stills++; break;
+        default:
+            return GRID_NONE;
+        }
+    }
+    if (posters && !stills) return GRID_POSTER;
+    if (stills && !posters) return GRID_STILL;
+    return GRID_NONE;
+}
+
+static int browse_grid_kind(void)
+{
+    return g_grid_list_mode ? GRID_NONE : browse_grid_kind_raw();
+}
+
+typedef struct {
+    int cols, rows;
+    int cw, ch;          /* cell (art) size in framebuffer pixels */
+    int gx, gy;          /* gaps between cells */
+    int label_h;         /* a title line under each cell (stills only) */
+    int x0, y0;          /* top-left of the first cell */
+    int strip_y;         /* where the focused item's details start */
+} GridLayout;
+
+static GridLayout grid_layout(FBDev *fb, int kind)
+{
+    GridLayout L;
+    double par = par_correction(fb);
+    int avail_w = fb->width - 2 * SAFE_X;
+    int top     = SAFE_Y + 26;
+    int bottom  = fb->height - (8 + SAFE_Y_BOT) - 9;   /* top of theme_hint_bar's plate */
+
+    L.cols    = (kind == GRID_POSTER) ? 6 : 3;
+    L.gx      = (kind == GRID_POSTER) ? 10 : 12;
+    L.gy      = 8;
+    L.label_h = (kind == GRID_STILL) ? 12 : 0;
+    L.cw = (avail_w - (L.cols - 1) * L.gx) / L.cols;
+    /* Display aspect (2:3 poster, 16:9 still) on this screen's non-square
+     * pixels: blit_fit_centered's dw = sw/sh * dh * par, solved for dh. */
+    double aspect = (kind == GRID_POSTER) ? 2.0 / 3.0 : 16.0 / 9.0;
+    L.ch = (int)(L.cw / (aspect * par) + 0.5);
+
+    /* Room for the focused item's title and one line of details (two more
+     * of overview for an episode) under the grid. */
+    /* Title (2x font) and a details line; an episode adds two lines of
+     * overview. */
+    int strip = (kind == GRID_POSTER) ? 5 + 16 + 5 + 9 : 5 + 16 + 5 + 12 + 20;
+    /* Two rows, shrinking the cells to make them fit (NTSC's 240 lines
+     * need it); one bigger row only when two would come out too small. */
+    int room = bottom - top - strip;
+    int max_ch = (room + L.gy) / 2 - L.gy - L.label_h;
+    L.rows = 2;
+    if (max_ch < L.ch) {
+        if (max_ch * 10 < L.ch * 7) {
+            L.rows = 1;
+            int one = room - L.label_h;
+            if (one < L.ch) max_ch = one; else max_ch = L.ch;
+        }
+        if (max_ch < L.ch) {
+            L.ch = max_ch;
+            L.cw = (int)(L.ch * aspect * par + 0.5);
+        }
+    }
+    L.x0 = SAFE_X + (avail_w - (L.cols * L.cw + (L.cols - 1) * L.gx)) / 2;
+    L.y0 = top;
+    L.strip_y = top + L.rows * (L.ch + L.label_h + L.gy) - L.gy;   /* no gap after the last row */
+    return L;
+}
+
+#define POSTER_POOL 40
+#define POSTER_DECODES_PER_DRAW 2
+#define POSTER_DIM 160      /* unfocused art, out of 255 */
+typedef struct {
+    char     id[EB_ID_LEN];
+    char     tag[12];
+    int      w, h;
+    uint8_t *px, *dim;      /* full and pre-dimmed, both w*h RGBA */
+    unsigned stamp;
+} PosterSlot;
+static PosterSlot g_posters[POSTER_POOL];
+static unsigned   g_poster_clock = 0;
+static int        g_poster_decodes_left = 0;
+/* A poster not in the SD cache yet is looked for again only after this, so
+ * a screen of still-downloading art isn't an SD card open per cell per
+ * redraw. */
+static double     g_poster_miss_retry_at = 0.0;
+
+/* Crop-to-fill nearest-neighbour scale into a dw x dh buffer whose DISPLAY
+ * aspect is dw/(dh*par), so art keeps its shape on non-square pixels. */
+static uint8_t *poster_scale(const uint8_t *src, int sw, int sh, int dw, int dh, double par)
+{
+    double want = (double)dw / ((double)dh * par);
+    double cx = 0.0, cy = 0.0, cwid = sw, chei = sh;
+    if ((double)sw / sh > want) { cwid = sh * want; cx = (sw - cwid) / 2.0; }
+    else                        { chei = sw / want; cy = (sh - chei) / 2.0; }
+    uint8_t *out = malloc((size_t)dw * dh * 4);
+    if (!out) return NULL;
+    for (int y = 0; y < dh; y++) {
+        int sy = (int)(cy + (y + 0.5) * chei / dh);
+        if (sy >= sh) sy = sh - 1;
+        const uint8_t *row = src + (size_t)sy * sw * 4;
+        uint8_t *o = out + (size_t)y * dw * 4;
+        for (int x = 0; x < dw; x++) {
+            int sx = (int)(cx + (x + 0.5) * cwid / dw);
+            if (sx >= sw) sx = sw - 1;
+            const uint8_t *p = row + sx * 4;
+            o[0] = p[0]; o[1] = p[1]; o[2] = p[2]; o[3] = 255;
+            o += 4;
+        }
+    }
+    return out;
+}
+
+/* The item's art at cell size, or NULL while it isn't cached (or this
+ * redraw's decode budget is spent) — the cell shows a placeholder, and a
+ * later redraw fills it in. */
+static PosterSlot *poster_get(FBDev *fb, const EbItem *it, int cw, int ch)
+{
+    if (!it->image_tag[0]) return NULL;
+    PosterSlot *lru = &g_posters[0];
+    for (int i = 0; i < POSTER_POOL; i++) {
+        PosterSlot *p = &g_posters[i];
+        if (p->px && p->w == cw && p->h == ch && !strcmp(p->id, it->id) &&
+            !strncmp(p->tag, it->image_tag, sizeof(p->tag) - 1)) {
+            p->stamp = ++g_poster_clock;
+            return p;
+        }
+        if (lru->px && (!p->px || p->stamp < lru->stamp)) lru = p;   /* an empty slot, else the oldest */
+    }
+    if (g_poster_decodes_left <= 0 || now_sec() < g_poster_miss_retry_at) return NULL;
+
+    char cpath[192];
+    cover_cache_path(it->id, it->image_tag, cpath, sizeof(cpath));
+    int sw = 0, sh = 0;
+    g_poster_decodes_left--;
+    uint8_t *src = load_image_keep(cpath, &sw, &sh);
+    if (!src) { g_poster_miss_retry_at = now_sec() + 0.3; return NULL; }
+    uint8_t *px = poster_scale(src, sw, sh, cw, ch, par_correction(fb));
+    stbi_image_free(src);
+    if (!px) return NULL;
+    uint8_t *dim = malloc((size_t)cw * ch * 4);
+    if (!dim) { free(px); return NULL; }
+    for (size_t i = 0; i < (size_t)cw * ch * 4; i += 4) {
+        dim[i]     = (uint8_t)(px[i]     * POSTER_DIM / 255);
+        dim[i + 1] = (uint8_t)(px[i + 1] * POSTER_DIM / 255);
+        dim[i + 2] = (uint8_t)(px[i + 2] * POSTER_DIM / 255);
+        dim[i + 3] = 255;
+    }
+
+    free(lru->px); free(lru->dim);
+    snprintf(lru->id, sizeof(lru->id), "%s", it->id);
+    snprintf(lru->tag, sizeof(lru->tag), "%s", it->image_tag);
+    lru->w = cw; lru->h = ch;
+    lru->px = px; lru->dim = dim;
+    lru->stamp = ++g_poster_clock;
+    return lru;
+}
+
+/* "1h 42m" / "42m" */
+static void fmt_runtime(char *out, size_t n, int64_t ticks)
+{
+    int minutes = (int)(ticks / 10000000LL / 60);
+    if (minutes <= 0)      out[0] = '\0';
+    else if (minutes < 60) snprintf(out, n, "%dm", minutes);
+    else                   snprintf(out, n, "%dh %02dm", minutes / 60, minutes % 60);
+}
+
+static void draw_browse_grid(FBDev *fb, int kind)
+{
+    BrowseFrame *f = &g_stack[g_stack_depth - 1];
+    GridLayout L = grid_layout(fb, kind);
+    g_poster_decodes_left = POSTER_DECODES_PER_DRAW;
+
+    browse_hero_load(fb);
+    fb_clear(fb);
+    if (g_hero_px)
+        fb_blit_opaque(fb, g_hero_px, g_hero_w, g_hero_h, 0, 0, g_hero_w, g_hero_h);
+    draw_top_bar(fb, f->title[0] ? f->title : "MiSTerEmby");
+
+    /* Keep the focused row on screen. */
+    int abs_sel = g_window_start + g_sel;
+    int sel_row = abs_sel / L.cols;
+    if (sel_row < g_grid_top) g_grid_top = sel_row;
+    if (sel_row >= g_grid_top + L.rows) g_grid_top = sel_row - L.rows + 1;
+    if (g_grid_top < 0) g_grid_top = 0;
+
+    int pitch = L.ch + L.label_h + L.gy;
+    for (int r = 0; r < L.rows; r++) {
+        for (int c = 0; c < L.cols; c++) {
+            int idx = (g_grid_top + r) * L.cols + c - g_window_start;
+            if (idx < 0 || idx >= g_item_count) continue;
+            const EbItem *it = &g_items[idx];
+            int x = L.x0 + c * (L.cw + L.gx);
+            int y = L.y0 + r * pitch;
+            int focused = (idx == g_sel);
+
+            if (focused)   /* Emby focus: a green frame around the art */
+                theme_round_rect(fb, x - 3, y - 3, L.cw + 6, L.ch + 6, 4, THEME_GREEN, 255);
+
+            PosterSlot *ps = poster_get(fb, it, L.cw, L.ch);
+            if (ps) {
+                fb_blit_opaque(fb, focused ? ps->px : ps->dim, L.cw, L.ch, x, y, L.cw, L.ch);
+            } else {
+                /* No art (yet): a plate with the name on it. */
+                theme_round_rect(fb, x, y, L.cw, L.ch, 3, 0x26, 0x26, 0x26, 255);
+                draw_wrapped(fb, x + 4, y + 6, it->name, 1, L.cw - 8, (L.ch - 10) / 10,
+                             COL_HINT);
+            }
+
+            if (it->played &&
+                (it->type == EB_TYPE_MOVIE || it->type == EB_TYPE_EPISODE ||
+                 it->type == EB_TYPE_MUSIC_VIDEO))
+                theme_check_badge(fb, x + L.cw - 13, y + 3, 9);
+            if (it->resume_ticks > 0 && it->runtime_ticks > 0 && !it->played) {
+                double frac = (double)it->resume_ticks / (double)it->runtime_ticks;
+                fb_fill_rect_alpha(fb, x, y + L.ch - 4, L.cw, 4, 0x10, 0x10, 0x10, 255);
+                fb_fill_rect_alpha(fb, x, y + L.ch - 4, (int)(L.cw * frac + 0.5), 4, THEME_GREEN, 255);
+            }
+
+            if (L.label_h) {
+                char label[160];
+                if (it->type == EB_TYPE_EPISODE && it->index_number > 0)
+                    snprintf(label, sizeof(label), "%d. %s", it->index_number, it->name);
+                else
+                    snprintf(label, sizeof(label), "%s", it->name);
+                truncate_to_width(fb, label, 1, L.cw);
+                if (focused) draw_text(fb, x, y + L.ch + 4, label, 1, COL_SEL_FG);
+                else         draw_text(fb, x, y + L.ch + 4, label, 1, COL_HINT);
+            }
+        }
+    }
+
+    /* The focused item's details, as Emby shows them under its rows —
+     * straight under the last row in use, so a short list (a series' two
+     * seasons) doesn't leave them stranded at the bottom. */
+    if (g_item_count > 0) {
+        const EbItem *it = &g_items[g_sel];
+        int avail_w = fb->width - 2 * SAFE_X;
+        int64_t total_items = g_total_count > 0 ? g_total_count : g_item_count;
+        int used_rows = (int)((total_items + L.cols - 1) / L.cols) - g_grid_top;
+        if (used_rows > L.rows) used_rows = L.rows;
+        if (used_rows < 1) used_rows = 1;
+        int y = L.y0 + used_rows * pitch - L.gy + 5;
+
+        char title[160];
+        if (it->type == EB_TYPE_EPISODE && it->index_number > 0)
+            snprintf(title, sizeof(title), "%d. %s", it->index_number, it->name);
+        else
+            snprintf(title, sizeof(title), "%s", it->name);
+        int scale = text_width(fb, title, 2) <= avail_w ? 2 : 1;
+        if (scale == 1) truncate_to_width(fb, title, 1, avail_w);
+        draw_text(fb, SAFE_X, y, title, scale, COL_SEL_FG);
+        y += 8 * scale + 5;
+
+        char meta[160] = "", part[48];
+        #define META_ADD(...) do { snprintf(part, sizeof(part), __VA_ARGS__); \
+            if (meta[0]) strncat(meta, "   ", sizeof(meta) - strlen(meta) - 1); \
+            strncat(meta, part, sizeof(meta) - strlen(meta) - 1); } while (0)
+        if (it->year[0]) META_ADD("%s", it->year);
+        if (it->type == EB_TYPE_SERIES && it->child_count > 0)
+            META_ADD("%d season%s", it->child_count, it->child_count == 1 ? "" : "s");
+        if (it->type == EB_TYPE_SERIES && it->recursive_item_count > 0)
+            META_ADD("%d episodes", it->recursive_item_count);
+        if (it->type == EB_TYPE_FOLDER && it->child_count > 0)
+            META_ADD("%d item%s", it->child_count, it->child_count == 1 ? "" : "s");
+        char rt[16];
+        fmt_runtime(rt, sizeof(rt), it->runtime_ticks);
+        if (rt[0]) META_ADD("%s", rt);
+        if (it->community_rating > 0.0) META_ADD("* %.1f", it->community_rating);
+        #undef META_ADD
+        int meta_w = text_width(fb, meta, 1);
+        draw_text(fb, SAFE_X, y, meta, 1, COL_HINT);
+
+        /* Watch state in Emby green after the details. */
+        char state_txt[32] = "";
+        if (it->played) snprintf(state_txt, sizeof(state_txt), "Played");
+        else if (it->resume_ticks > 0) {
+            char t[16];
+            fmt_time(t, sizeof(t), (double)it->resume_ticks / 10000000.0);
+            snprintf(state_txt, sizeof(state_txt), "Resume %s", t);
+        }
+        if (state_txt[0])
+            draw_text(fb, SAFE_X + meta_w + (meta[0] ? 16 : 0), y, state_txt, 1, THEME_GREEN_LIGHT);
+        y += 12;
+
+        if (kind == GRID_STILL && it->overview[0])
+            draw_wrapped(fb, SAFE_X, y, it->overview, 1, avail_w, 2, COL_ITEM);
+    }
+
+    theme_hint_bar(fb, g_stack_depth > 1 ? "B:open  SELECT:list view  A:back"
+                                         : "B:open  SELECT:list view  A:exit");
+    int64_t total = g_total_count > 0 ? g_total_count : g_item_count;
+    if (total > (int64_t)L.cols * L.rows) {
+        char buf[24];
+        snprintf(buf, sizeof(buf), "%d / %lld", abs_sel + 1, (long long)total);
+        draw_text(fb, fb->width - text_width(fb, buf, 1) - SAFE_X,
+                  fb->height - 8 - SAFE_Y_BOT, buf, 1, THEME_GREEN_LIGHT);
+    }
+    fb_flip(fb);
+}
+
+/* LEFT/RIGHT step one cell, UP/DOWN a row, L/R a screenful. */
+static int browse_grid_input(FBDev *fb, int inp, int kind)
+{
+    GridLayout L = grid_layout(fb, kind);
+    int abs_sel = g_window_start + g_sel;
+    int nav = 0;
+    if (inp & INP_LEFT)                       nav |= browse_move_sel(fb, -1);
+    if (inp & INP_RIGHT)                      nav |= browse_move_sel(fb, +1);
+    if ((inp & INP_UP) && abs_sel >= L.cols)  nav |= browse_move_sel(fb, -L.cols);
+    if (inp & INP_DOWN) {
+        /* From the last full row, DOWN still lands on the short row below. */
+        int64_t total = g_total_count > 0 ? g_total_count : g_item_count;
+        if ((abs_sel / L.cols + 1) * L.cols < total) nav |= browse_move_sel(fb, +L.cols);
+    }
+    if (inp & INP_L) nav |= browse_move_sel(fb, -L.cols * L.rows);
+    if (inp & INP_R) nav |= browse_move_sel(fb, +L.cols * L.rows);
+    return nav;
+}
+
 static void draw_browse(FBDev *fb)
 {
+    {
+        BrowseFrame *gf = &g_stack[g_stack_depth - 1];
+        int kind = (gf->kind == FRAME_VIEWS) ? GRID_NONE : browse_grid_kind();
+        if (kind != GRID_NONE) { draw_browse_grid(fb, kind); return; }
+    }
     BrowseFrame *f = &g_stack[g_stack_depth - 1];
     if (f->kind == FRAME_VIEWS && !g_root_list_mode) { draw_browse_carousel(fb); return; }
 
@@ -2379,6 +2739,8 @@ static void draw_browse(FBDev *fb)
     int showing_artists = g_item_count > 0 && g_items[0].type == EB_TYPE_ARTIST;
     const char *hint =
         (g_stack_depth > 1 && showing_artists) ? "B:open  SELECT:shuffle library  A:back" :
+        (g_stack_depth > 1 && browse_grid_kind_raw() != GRID_NONE)
+                                               ? "B:open  SELECT:poster view  A:back" :
         (g_stack_depth > 1)                    ? "B:open  A:back" :
                                                   "B:open  SELECT:tile view  A:exit";
     theme_hint_bar(fb, hint);
@@ -5905,6 +6267,12 @@ int main(int argc, char **argv)
                 g_root_list_mode = !g_root_list_mode;
                 nav = 1;
             }
+            /* SELECT in a film/TV list swaps the posters for the text list
+             * and back. */
+            if (!at_root && (inp & INP_SELECT) && browse_grid_kind_raw() != GRID_NONE) {
+                g_grid_list_mode = !g_grid_list_mode;
+                nav = 1;
+            }
             /* SELECT on the music library's artist list starts an infinite
              * shuffle across the whole library instead of drilling in. */
             if (!at_root && (inp & INP_SELECT) &&
@@ -5939,6 +6307,8 @@ int main(int argc, char **argv)
                     carousel_slide_animate(&fb, old_sel, g_sel);
                     nav = 1;
                 }
+            } else if (browse_grid_kind() != GRID_NONE) {
+                nav |= browse_grid_input(&fb, inp, browse_grid_kind());
             } else {
                 /* LEFT/RIGHT have nothing else to do in a plain list, so
                  * they're the whole-page jump — the fast way through a long

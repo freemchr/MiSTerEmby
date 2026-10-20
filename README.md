@@ -53,6 +53,7 @@ Rendered with `tools/run-local.sh` against the bundled mock server (`tools/mock-
 
 These are on the `main` branch but not in the v1.0.0 download yet, and haven't been tested on a MiSTer. They'll ship as v1.1.0 once they have been.
 
+- **Poster view**: Movies, TV and Collections show as a wall of posters, and a season's episodes as a row of stills with the focused episode's synopsis below, the way Emby's TV apps lay them out. Art comes from the SD card cache and is scaled once, so it stays light on the MiSTer. SELECT swaps to the text list and back
 - **Live TV and Recordings**: when the Emby server has Live TV set up, a Live TV tile lists the channels with what's on now, and selecting one tunes straight in. A Recordings tile lists finished recordings, which play like any other title. Live channels can be paused but not seeked
 - **Collections**: a home tile for your Emby box sets, even if the server shows no Collections library
 - **Skip intro and credits**: when Emby has detected a title's intro or credits, a "UP: Skip intro" / "UP: Skip credits" prompt appears at the right moment. Skipping the credits finishes the title and marks it played

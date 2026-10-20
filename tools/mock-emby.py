@@ -86,6 +86,57 @@ def _png(r, g, b, w=8, h=8):
 COVERS = [_png(200, 60, 60), _png(60, 160, 200), _png(200, 170, 60),
           _png(120, 90, 200), _png(70, 190, 120)]
 
+PALETTES = [(200, 60, 60), (60, 160, 200), (200, 170, 60), (120, 90, 200),
+            (70, 190, 120), (220, 120, 50), (90, 110, 140)]
+
+
+def _png_rgba(w, h, pixel):
+    """PNG from a pixel(x, y) -> (r, g, b, a) function."""
+    raw = b"".join(b"\x00" + b"".join(bytes(pixel(x, y)) for x in range(w)) for y in range(h))
+
+    def chunk(tag, payload):
+        return (struct.pack(">I", len(payload)) + tag + payload +
+                struct.pack(">I", zlib.crc32(tag + payload) & 0xFFFFFFFF))
+
+    return (b"\x89PNG\r\n\x1a\n" +
+            chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)) +
+            chunk(b"IDAT", zlib.compress(raw, 6)) +
+            chunk(b"IEND", b""))
+
+
+_ART = {}
+
+
+def mock_art(item_id, kind):
+    """Artwork shaped like the real thing, so layouts can be judged: a 2:3
+    poster with a title band, a 16:9 backdrop or episode still, or a logo of
+    white "letters" on transparency. Coloured per item, cached per shape."""
+    item = ITEMS.get(item_id, {})
+    wide = (kind.startswith("Backdrop") or item.get("Type") == "Episode"
+            or item_id.startswith("channel-"))
+    shape = "logo" if kind == "Logo" else ("wide" if wide else "poster")
+    key = (zlib.crc32(item_id.encode()) % len(PALETTES), shape)
+    if key in _ART:
+        return _ART[key]
+    r, g, b = PALETTES[key[0]]
+    if shape == "logo":
+        w, h = 160, 40
+        def px(x, y):
+            on = 8 <= y < 32 and (x // 12) % 3 != 2 and x < 150
+            return (255, 255, 255, 255) if on else (0, 0, 0, 0)
+    else:
+        w, h = (160, 90) if shape == "wide" else (80, 120)
+        def px(x, y):
+            t = y / h
+            k = 1.0 - 0.7 * t                     # darker towards the bottom
+            if shape == "poster" and 0.72 < t < 0.84 and 0.12 < x / w < 0.88:
+                return (235, 235, 235, 255)       # the title band
+            if (x + y) % 40 < 20:                  # a diagonal stripe, so it isn't flat
+                k *= 0.8
+            return (int(r * k), int(g * k), int(b * k), 255)
+    _ART[key] = _png_rgba(w, h, px)
+    return _ART[key]
+
 VIEWS = [
     {"Id": "view-movies", "Name": "Movies",   "CollectionType": "movies"},
     {"Id": "view-tv",     "Name": "TV Shows", "CollectionType": "tvshows"},
@@ -449,7 +500,7 @@ class Handler(BaseHTTPRequestHandler):
 
         m = re.match(r"^/Items/([^/]+)/Images/([^/?]+)", path)
         if m:
-            return self._send(COVERS[hash(m.group(1)) % len(COVERS)], "image/png")
+            return self._send(mock_art(m.group(1), m.group(2)), "image/png")
 
         m = re.match(r"^/Shows/([^/]+)/Seasons$", path)
         if m:

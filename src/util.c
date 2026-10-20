@@ -28,6 +28,7 @@ uint8_t *load_image_keep(const char *path, int *w, int *h)
 #include <dirent.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <sys/stat.h>
 
 int cache_sweep_superseded(const char *dir, const char *ext, const char *keep_substr)
@@ -60,3 +61,15 @@ int cache_sweep_superseded(const char *dir, const char *ext, const char *keep_su
     closedir(d);
     return removed;
 }
+
+static const char *cache_dir(char *buf, size_t n, const char *name)
+{
+    if (!buf[0]) {
+        const char *root = getenv("MISTEREMBY_CACHE_ROOT");
+        snprintf(buf, n, "%s/%s", root && root[0] ? root : "/media/fat/misteremby", name);
+    }
+    return buf;
+}
+
+const char *cover_cache_dir(void) { static char b[192]; return cache_dir(b, sizeof(b), "covercache"); }
+const char *grid_cache_dir(void)  { static char b[192]; return cache_dir(b, sizeof(b), "gridcache"); }

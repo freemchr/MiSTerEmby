@@ -38,4 +38,11 @@ uint8_t *load_image_keep(const char *path, int *w, int *h);
  * already refills in the background whenever an entry is missing. */
 int cache_sweep_superseded(const char *dir, const char *ext, const char *keep_substr);
 
+/* The cover and grid cache directories: under /media/fat/misteremby on the
+ * MiSTer, or under $MISTEREMBY_CACHE_ROOT when it's set — a desktop run
+ * (tools/run-local.sh) has no /media/fat, and without a cache it never shows
+ * any artwork at all. */
+const char *cover_cache_dir(void);
+const char *grid_cache_dir(void);
+
 #endif

@@ -2011,7 +2011,7 @@ int eb_list_episodes(const EbConfig *cfg, const char *series_id, const char *sea
     char path[416];
     snprintf(path, sizeof(path),
         "/Shows/%s/Episodes?SeasonId=%s&UserId=%s"
-        "&Fields=RunTimeTicks&EnableUserData=true"
+        "&Fields=RunTimeTicks,Overview&EnableUserData=true"
         "&ImageTypeLimit=1&EnableImageTypes=Primary,Backdrop&StartIndex=%d&Limit=%d",
         safe_series, safe_season, cfg->user_id, start_index, max);
 

@@ -52,6 +52,9 @@ make --no-print-directory
 
 export MISTEREMBY_FB="${WIDTH}x${HEIGHT}"
 export MISTEREMBY_FRAME_OUT="$RAW"
+# Artwork cache: there is no /media/fat here (see util.h, cover_cache_dir).
+export MISTEREMBY_CACHE_ROOT="${MISTEREMBY_CACHE_ROOT:-/tmp/misteremby_cache}"
+mkdir -p "$MISTEREMBY_CACHE_ROOT"
 
 if [ -n "$KEYS" ]; then
     export MISTEREMBY_KEYS="$KEYS"

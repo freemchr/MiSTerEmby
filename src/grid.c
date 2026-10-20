@@ -130,7 +130,7 @@ static void grid_cache_disk_path(const char *view_id, int cell_w, char *out, siz
      * compares item counts — so without this, changing the fetch width (or
      * simply switching to a display mode with a different cell size) would go
      * on serving the old resolution off the card forever. */
-    snprintf(out, outsz, GRID_CACHE_DIR "/%s_w%d.dat", safe, cell_w);
+    snprintf(out, outsz, "%s/%s_w%d.dat", grid_cache_dir(), safe, cell_w);
 }
 
 /* Persisted grid cache survives an app restart — without it, every
@@ -199,7 +199,7 @@ static void grid_cache_save_to_disk(const GridLibCache *gc, const char *view_id,
                                    int64_t count, int cell_w)
 {
     if (gc->count <= 0) return;
-    mkdir(GRID_CACHE_DIR, 0755);   /* ignore EEXIST/already-there */
+    mkdir(grid_cache_dir(), 0755);   /* ignore EEXIST/already-there */
     char path[300];
     grid_cache_disk_path(view_id, cell_w, path, sizeof(path));
     FILE *f = fopen(path, "wb");
