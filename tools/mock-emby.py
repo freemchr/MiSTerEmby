@@ -440,6 +440,14 @@ class Handler(BaseHTTPRequestHandler):
             # Emby nests the streams inside each media source.
             item["MediaSources"] = [{"Id": "mediasource_" + m.group(1), "MediaStreams": streams}]
             item["People"] = people()
+            if item.get("Type") == "Episode":
+                # Emby's skip-intro markers, as detected by the server.
+                item["Chapters"] = [
+                    {"StartPositionTicks": 0, "Name": "Chapter 1"},
+                    {"StartPositionTicks": 30 * 10_000_000, "MarkerType": "IntroStart"},
+                    {"StartPositionTicks": 90 * 10_000_000, "MarkerType": "IntroEnd"},
+                    {"StartPositionTicks": 40 * 60 * 10_000_000, "MarkerType": "CreditsStart"},
+                ]
             item["ImageTags"] = dict(item.get("ImageTags", {}))
             item["ImageTags"]["Logo"] = "logo-" + m.group(1)
             return self._send(item)

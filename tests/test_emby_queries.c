@@ -186,6 +186,37 @@ static void test_direct_stream(void)
     }
 }
 
+static void test_markers(void)
+{
+    EbItem it;
+    memset(&it, 0, sizeof(it));
+    eb_parse_markers("{\"Chapters\":[{\"StartPositionTicks\":0,\"Name\":\"Chapter 1\"},"
+                     "{\"StartPositionTicks\":300000000,\"MarkerType\":\"IntroStart\"},"
+                     "{\"StartPositionTicks\":900000000,\"MarkerType\":\"IntroEnd\"},"
+                     "{\"StartPositionTicks\":24000000000,\"MarkerType\":\"CreditsStart\"}]}", &it);
+    checks++;
+    if (it.intro_start_ticks != 300000000 || it.intro_end_ticks != 900000000 ||
+        it.credits_start_ticks != 24000000000LL) {
+        failures++; printf("  FAIL markers: %lld %lld %lld\n", (long long)it.intro_start_ticks,
+                           (long long)it.intro_end_ticks, (long long)it.credits_start_ticks);
+    }
+    memset(&it, 0, sizeof(it));
+    eb_parse_markers("{\"Chapters\":[{\"StartPositionTicks\":600000000,\"MarkerType\":\"IntroEnd\"}]}", &it);
+    checks++;
+    if (it.intro_start_ticks != 0 || it.intro_end_ticks != 600000000) {
+        failures++; printf("  FAIL intro without start\n");
+    }
+    memset(&it, 0, sizeof(it));
+    eb_parse_markers("{\"Chapters\":[{\"StartPositionTicks\":900000000,\"MarkerType\":\"IntroStart\"},"
+                     "{\"StartPositionTicks\":300000000,\"MarkerType\":\"IntroEnd\"}]}", &it);
+    checks++;
+    if (it.intro_end_ticks != 0) { failures++; printf("  FAIL backwards intro kept\n"); }
+    memset(&it, 0, sizeof(it));
+    eb_parse_markers("{\"Name\":\"no chapters\"}", &it);
+    checks++;
+    if (it.intro_end_ticks || it.credits_start_ticks) { failures++; printf("  FAIL no-chapters\n"); }
+}
+
 int main(void)
 {
     test_movie_query();
@@ -195,6 +226,7 @@ int main(void)
     test_input_normalization();
     test_collection_item_types();
     test_direct_stream();
+    test_markers();
 
     printf("emby queries: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;

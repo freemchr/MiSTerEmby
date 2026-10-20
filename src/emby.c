@@ -429,6 +429,45 @@ static void parse_media_streams(const JsonDoc *doc, const JsonNode *item, EbItem
     }
 }
 
+/* Intro/credits markers from the item's Chapters. A marker is an ordinary
+ * chapter entry with a MarkerType; a title with no detected intro simply
+ * has none, which leaves every field 0. An IntroEnd before its IntroStart
+ * (a server-side detection glitch) is dropped rather than offered. */
+static void parse_markers(const JsonDoc *doc, const JsonNode *item, EbItem *it)
+{
+    it->intro_start_ticks = it->intro_end_ticks = it->credits_start_ticks = 0;
+    const JsonNode *chapters = json_find(doc, item, "Chapters");
+    if (!chapters) return;
+    int64_t intro_start = -1, intro_end = 0, credits = 0;
+    JSON_FOREACH(doc, chapters, ch) {
+        const char *type = json_as_str(json_find(doc, ch, "MarkerType"), "");
+        int64_t t = json_as_i64(json_find(doc, ch, "StartPositionTicks"), 0);
+        if      (!strcmp(type, "IntroStart"))   intro_start = t;
+        else if (!strcmp(type, "IntroEnd"))     intro_end   = t;
+        else if (!strcmp(type, "CreditsStart")) credits     = t;
+    }
+    if (intro_end > 0) {
+        if (intro_start < 0) intro_start = 0;   /* intro from the very start */
+        if (intro_end > intro_start) {
+            it->intro_start_ticks = intro_start;
+            it->intro_end_ticks   = intro_end;
+        }
+    }
+    if (credits > 0) it->credits_start_ticks = credits;
+}
+
+void eb_parse_markers(const char *json_text, EbItem *out)
+{
+    char *copy = strdup(json_text ? json_text : "");
+    if (!copy) return;
+    JsonDoc doc;
+    if (json_parse(&doc, copy)) {
+        parse_markers(&doc, json_root(&doc), out);
+        json_free(&doc);
+    }
+    free(copy);
+}
+
 /* Parses a {"Items":[ ... ]} BaseItemDtoQueryResult into out[]. */
 static int parse_item_list(const JsonDoc *doc, EbItem *out, int max)
 {
@@ -1733,7 +1772,7 @@ int eb_get_item_details(const EbConfig *cfg, const char *item_id, EbItem *out)
 
     char path[384];
     snprintf(path, sizeof(path),
-        "/Users/%s/Items/%s?Fields=Overview,ProductionYear,RunTimeTicks,People,MediaStreams,MediaSources,CommunityRating"
+        "/Users/%s/Items/%s?Fields=Overview,ProductionYear,RunTimeTicks,People,MediaStreams,MediaSources,CommunityRating,Chapters"
         "&EnableUserData=true&EnableImageTypes=Primary,Logo,Backdrop",
         cfg->user_id, safe_id);
 
@@ -1746,6 +1785,7 @@ int eb_get_item_details(const EbConfig *cfg, const char *item_id, EbItem *out)
     parse_item_fields(&r.doc, item, out);
     parse_cast(&r.doc, item, out);
     parse_media_streams(&r.doc, item, out);
+    parse_markers(&r.doc, item, out);
     copy_raw_str(&r.doc, item, "MediaSources[0].Id", out->media_source_id,
                  sizeof(out->media_source_id));
     /* Emby nests the streams inside each media source; the top-level

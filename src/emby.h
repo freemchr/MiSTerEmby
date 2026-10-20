@@ -185,6 +185,14 @@ typedef struct {
      * eb_direct_stream_codec). 0 if not fetched. */
     int        source_interlaced;
     double     source_fps;
+    /* Emby's intro/credits markers (Chapters[].MarkerType IntroStart /
+     * IntroEnd / CreditsStart, Emby 4.8+ once the server has detected
+     * them), in ticks. intro_end_ticks == 0 means no intro marker;
+     * credits_start_ticks == 0 means no credits marker. Empty unless
+     * fetched via eb_get_item_details. */
+    int64_t    intro_start_ticks;
+    int64_t    intro_end_ticks;
+    int64_t    credits_start_ticks;
 } EbItem;
 
 typedef struct {
@@ -484,6 +492,11 @@ int eb_list_episodes(const EbConfig *cfg, const char *series_id, const char *sea
  * browse-list fetches cheap (no point pulling 20 actors per movie for every
  * row in a list). Call this once when entering the info screen. */
 int eb_get_item_details(const EbConfig *cfg, const char *item_id, EbItem *out);
+
+/* Parses an item's Chapters array (a JSON object with a "Chapters" member,
+ * e.g. a whole item-details response) for the intro/credits markers above.
+ * Exposed for unit testing. */
+void eb_parse_markers(const char *json_text, EbItem *out);
 
 /* Builds the primary image URL for an item, capped at 200px wide server-side
  * (empty image_tag => returns 0). */

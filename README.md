@@ -41,6 +41,7 @@ Rendered with `tools/run-local.sh` against the bundled mock server (`tools/mock-
 - **Home screen**: a row of library tiles (name and item count) over a dimmed mosaic of that library's covers. LEFT/RIGHT slides between them; SELECT swaps to a plain list
 - **Browsing**: lists with cover art, played badges, resume progress bars, backdrop art behind the list, a live clock, and scrolling for long titles. Large libraries page in as you scroll
 - **Info screen**: backdrop, logo, year, rating, overview, and Play/Resume buttons
+- **Skip intro and credits**: when Emby has detected a title's intro or credits, a "UP: Skip intro" / "UP: Skip credits" prompt appears at the right moment. Skipping the credits finishes the title and marks it played
 - **Direct streaming for SD files**: DivX/Xvid, MPEG-1 and progressive MPEG-2 files play with their video untouched, so the Emby server only repackages them (`TRANSCODE_ALWAYS` in `emby.conf` turns this off)
 - **Video playback**: server-side transcode to a light MPEG-4 stream the MiSTer can decode in real time, letterboxed or pillarboxed for any source aspect. True interlaced 480i/576i output is supported through the standalone interlaced core (see the [display guide](docs/DISPLAY_COMPATIBILITY.md#interlaced-output))
 - **Track picker** (SELECT during playback): audio tracks, subtitles (text subtitles rendered client-side with live sync adjustment; image subtitles burned in by the server), and picture modes for wide titles (Original / Zoom 4:3 / Stretch)
@@ -121,6 +122,7 @@ Button names follow Xbox-style labels (bottom face button = A, right = B). On Ni
 | Info | SELECT | Tab | Play from the start (when there's a resume point) |
 | Video | B | B / Enter / X | Pause / resume |
 | Video | Left / Right | Left / Right | Seek 30s |
+| Video | Up | Up | Skip intro / credits (while the prompt shows) |
 | Video | SELECT | Tab | Track picker |
 | Video | L / R | PageUp / PageDown | VSync on / off |
 | Video | A | Esc | Stop |

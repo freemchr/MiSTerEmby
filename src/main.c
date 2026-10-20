@@ -3839,6 +3839,47 @@ static int player_handle_input(FBDev *fb, int inp, double loop_now)
         draw_paused(fb, g_info_item.name, seek_pending_target());
     } else {
         if (inp & INP_SELECT) { submenu_open(fb); draw_submenu(fb); input_drain(); return PLAYER_FRAME_HANDLED; }
+
+        /* Skip intro / credits, from Emby's chapter markers. The prompt is
+         * mplayer's own OSD text (see osd_flash — an app-drawn overlay
+         * would flicker against mplayer's frame writes), re-issued every
+         * second while the window lasts and held back while a seek's own
+         * OSD readout is showing. */
+        {
+            double pos = play_position();
+            double intro_s   = (double)g_info_item.intro_start_ticks   / 10000000.0;
+            double intro_e   = (double)g_info_item.intro_end_ticks     / 10000000.0;
+            double credits_s = (double)g_info_item.credits_start_ticks / 10000000.0;
+            int in_intro   = intro_e > 0.0 && pos >= intro_s && pos < intro_e - 1.0;
+            int in_credits = credits_s > 0.0 && pos >= credits_s;
+            static double prompt_next = 0.0;
+            if ((in_intro || in_credits) && g_seek_fire_at == 0.0 && loop_now >= prompt_next) {
+                osd_flash(in_intro ? "UP: Skip intro" : "UP: Skip credits", 0);
+                prompt_next = loop_now + 1.0;
+            }
+            if ((inp & INP_UP) && in_intro) {
+                /* Fire straight away rather than after the LEFT/RIGHT
+                 * debounce — this is one deliberate jump, not a run of
+                 * taps still being added up. */
+                g_seek_accum   = intro_e - pos;
+                g_seek_fire_at = loop_now;
+                eb_log_line("play: skipped intro (%.0fs -> %.0fs)", pos, intro_e);
+            } else if ((inp & INP_UP) && in_credits) {
+                /* Credits run to the end, so skipping them finishes the
+                 * title: report it watched, exactly as reaching the end
+                 * would. */
+                int64_t end_ticks = g_info_item.runtime_ticks > 0
+                                        ? g_info_item.runtime_ticks
+                                        : (int64_t)(pos * 10000000.0);
+                eb_report_stopped(&g_cfg, g_info_item.id, g_play_session_id, end_ticks, 1);
+                g_info_item.played = 1;
+                g_info_item.resume_ticks = 0;
+                player_stop();
+                eb_log_line("play: skipped credits at %.0fs", pos);
+                return PLAYER_FRAME_ENDED;
+            }
+        }
+
         if (inp & INP_A) player_pause_toggle();
         if (inp & INP_LEFT)  seek_accumulate(-SEEK_STEP, loop_now);
         if (inp & INP_RIGHT) seek_accumulate(+SEEK_STEP, loop_now);
