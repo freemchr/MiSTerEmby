@@ -421,6 +421,10 @@ static void parse_media_streams(const JsonDoc *doc, const JsonNode *item, EbItem
             int ar_w = 0, ar_h = 0;
             if (ar_buf[0] && sscanf(ar_buf, "%d:%d", &ar_w, &ar_h) == 2 && ar_h > 0)
                 it->source_aspect = (double)ar_w / (double)ar_h;
+            it->source_interlaced = json_as_bool(json_find(doc, stream, "IsInterlaced"), 0);
+            it->source_fps = json_as_dbl(json_find(doc, stream, "RealFrameRate"), 0.0);
+            if (it->source_fps <= 0.0)
+                it->source_fps = json_as_dbl(json_find(doc, stream, "AverageFrameRate"), 0.0);
         }
     }
 }
@@ -900,6 +904,11 @@ int eb_config_load(EbConfig *cfg)
         /* Same treatment again — a real config value is never this literal. */
         if (!strcasecmp(line, "INSECURE_TLS")) {
             cfg->insecure_tls = 1;
+            continue;
+        }
+
+        if (!strcasecmp(line, "TRANSCODE_ALWAYS")) {
+            cfg->transcode_always = 1;
             continue;
         }
 
@@ -1847,8 +1856,30 @@ int eb_download_image(const EbConfig *cfg, const EbItem *item, const char *dest_
 
 /* ── playback ─────────────────────────────────────────────────────────────── */
 
+const char *eb_direct_stream_codec(const EbItem *it)
+{
+    /* Codecs the MiSTer's Cortex-A9 decodes comfortably in software at SD
+     * sizes: MPEG-4 Part 2 is what Emby itself transcodes to (measured at
+     * ~3.8x real time for 720x300 on hardware), and the MS-MPEG4 / H.263 /
+     * MPEG-1/2 family is lighter still. H.264 is left out — measured at only
+     * ~2.6x for 720x300, which leaves too little margin for a full 720x576
+     * frame. Names are Emby's MediaStreams[].Codec values. */
+    static const char *const light[] = {
+        "mpeg4", "msmpeg4v3", "msmpeg4v2", "msmpeg4", "h263",
+        "mpeg1video", "mpeg2video", NULL
+    };
+    if (!it || !it->source_video_codec[0]) return NULL;
+    if (it->source_width <= 0 || it->source_height <= 0) return NULL;
+    if (it->source_width > 720 || it->source_height > 576) return NULL;
+    if (it->source_interlaced) return NULL;
+    if (it->source_fps > 30.5) return NULL;   /* 50/60fps would double the decode work */
+    for (int i = 0; light[i]; i++)
+        if (!strcasecmp(it->source_video_codec, light[i])) return light[i];
+    return NULL;
+}
+
 int eb_stream_url(const EbConfig *cfg, const char *item_id,
-                   const char *media_source_id,
+                   const char *media_source_id, const char *copy_codec,
                    const EbStreamProfile *profile, int64_t start_ticks,
                    const char *play_session_id, int burn_in_sub_index,
                    int audio_stream_index,
@@ -1946,14 +1977,24 @@ int eb_stream_url(const EbConfig *cfg, const char *item_id,
     char safe_msid[EB_ID_LEN + 16];
     eb_sanitize_id(media_source_id && media_source_id[0] ? media_source_id : item_id,
                    safe_msid, sizeof(safe_msid));
+    /* Direct stream: name the source's own codec and allow the copy, so
+     * Emby remuxes the video into TS untouched and only converts the audio
+     * (still mp3 stereo, for the same reasons as above). copy_codec is one
+     * of eb_direct_stream_codec's constants, never server data. */
+    char video_params[96];
+    if (copy_codec && copy_codec[0])
+        snprintf(video_params, sizeof(video_params),
+                 "&VideoCodec=%s&AllowVideoStreamCopy=true", copy_codec);
+    else
+        snprintf(video_params, sizeof(video_params),
+                 "&VideoCodec=mpeg4&AllowVideoStreamCopy=false&EnableAutoStreamCopy=false");
     snprintf(out, outlen,
         "%s" EB_API_BASE "/Videos/%s/stream.ts?Static=false&MediaSourceId=%s"
-        "&VideoCodec=mpeg4&AudioCodec=mp3&AudioChannels=2"
-        "&AllowVideoStreamCopy=false&EnableAutoStreamCopy=false"
+        "%s&AudioCodec=mp3&AudioChannels=2"
         "&AudioSampleRate=48000"
         "&MaxWidth=%d&MaxHeight=%d&VideoBitRate=%d&MaxFramerate=%d"
         "&StartTimeTicks=%lld&PlaySessionId=%s&DeviceId=%s%s%s&api_key=%s",
-        cfg->server, safe_id, safe_msid,
+        cfg->server, safe_id, safe_msid, video_params,
         profile->max_width, profile->max_height, profile->video_bitrate, fps_cap,
         (long long)(start_ticks > 0 ? start_ticks : 0),
         safe_session, cfg->device_id, sub_params, audio_params, cfg->token);

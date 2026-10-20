@@ -3890,12 +3890,17 @@ static void play(FBDev *fb, const char *item_id, double offset_secs)
 
     char url[1024];
     const EbStreamProfile profile = stream_profile();
-    eb_stream_url(&g_cfg, item_id, g_info_item.media_source_id, &profile, start_ticks, g_play_session_id,
-                  g_burned_in_sub_index, g_current_audio_index, url, sizeof(url));
+    /* A burned-in subtitle has to be painted into re-encoded video, so it
+     * rules out the untouched copy. */
+    const char *copy_codec = (g_burned_in_sub_index < 0 && !g_cfg.transcode_always)
+                               ? eb_direct_stream_codec(&g_info_item) : NULL;
+    eb_stream_url(&g_cfg, item_id, g_info_item.media_source_id, copy_codec, &profile, start_ticks,
+                  g_play_session_id, g_burned_in_sub_index, g_current_audio_index, url, sizeof(url));
     stream_via_curl_if_https(url, sizeof(url));
     /* Deliberately no item_id/title/url here — those identify what's in
      * someone's library, not how MiSTerEmby behaved. */
-    eb_log_line("play: profile=%dx%d@%d fb_phys_h=%d line_double=%d resume=%.0fs",
+    eb_log_line("play: %s profile=%dx%d@%d fb_phys_h=%d line_double=%d resume=%.0fs",
+                copy_codec ? "direct-stream" : "transcode",
                 profile.max_width, profile.max_height, profile.video_bitrate,
                 fb->phys_height, fb->line_double, offset_secs);
 
@@ -3906,7 +3911,8 @@ static void play(FBDev *fb, const char *item_id, double offset_secs)
     g_play_start_wall = now_sec();
     g_paused          = 0;
     g_last_progress_report = now_sec();
-    eb_report_start(&g_cfg, item_id, g_play_session_id, start_ticks, "Transcode");
+    eb_report_start(&g_cfg, item_id, g_play_session_id, start_ticks,
+                    copy_codec ? "DirectStream" : "Transcode");
 
     /* Picture zoom survives restarts of the SAME title (that's exactly how
      * the PICTURE tab applies it — see submenu_confirm) but never carries

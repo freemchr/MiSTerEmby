@@ -63,6 +63,18 @@ PAL
 # 480x270@8000000
 
 
+# ── Direct streaming ───────────────────────────────────────────────────────
+# SD files in a codec the MiSTer decodes easily (DivX/Xvid MPEG-4, MPEG-1,
+# progressive MPEG-2) are streamed with their video untouched: Emby only
+# repackages it and converts the audio, which takes almost no work on a
+# server without hardware transcoding. HD, H.264/HEVC and interlaced DVD
+# sources are always transcoded. Add a line containing just
+# TRANSCODE_ALWAYS to transcode everything instead, e.g. if a direct-streamed
+# file plays badly.
+#
+# TRANSCODE_ALWAYS
+
+
 # ── Troubleshooting: request log ───────────────────────────────────────────
 # Add a line containing just DEBUGLOG and MiSTerEmby writes
 # /media/fat/misteremby/debug.log. Off by default; the file is overwritten

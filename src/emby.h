@@ -180,6 +180,11 @@ typedef struct {
      * via non-square SAR). 0 if not fetched/parseable — caller should fall
      * back to source_width/source_height in that case. */
     double     source_aspect;
+    /* Video stream's IsInterlaced / RealFrameRate — decide whether the
+     * source can be streamed with its video untouched (see
+     * eb_direct_stream_codec). 0 if not fetched. */
+    int        source_interlaced;
+    double     source_fps;
 } EbItem;
 
 typedef struct {
@@ -230,6 +235,10 @@ typedef struct {
      * a self-signed cert. Only matters for https:// servers — a plain
      * http:// server (the common case) is unaffected either way. */
     int  insecure_tls;
+    /* "TRANSCODE_ALWAYS" config line: never stream a source's video
+     * untouched, even when eb_direct_stream_codec says it could. For
+     * troubleshooting a file that plays badly direct. */
+    int  transcode_always;
 } EbConfig;
 
 /* One in-flight Emby Connect PIN request (emby.media/pin). */
@@ -559,8 +568,19 @@ typedef struct {
  * transcoded server-side into the delivered container, so unlike a text
  * subtitle this cannot be switched client-side — changing it means building
  * a new URL and restarting playback at the current position. */
+/* The source video codec to ask Emby to COPY rather than transcode, or
+ * NULL when the video has to be transcoded. Copying means the server only
+ * remuxes the video (and converts the audio) — almost no CPU on a server
+ * without hardware transcoding — but the MiSTer then decodes the original
+ * stream, so only light codecs at SD sizes qualify, and never interlaced
+ * material (this pipeline has no deinterlacer; see the AllowVideoStreamCopy
+ * comment in eb_stream_url). */
+const char *eb_direct_stream_codec(const EbItem *it);
+
+/* copy_codec: NULL to transcode as usual, or the value returned by
+ * eb_direct_stream_codec to stream the source video untouched. */
 int eb_stream_url(const EbConfig *cfg, const char *item_id,
-                   const char *media_source_id,
+                   const char *media_source_id, const char *copy_codec,
                    const EbStreamProfile *profile, int64_t start_ticks,
                    const char *play_session_id, int burn_in_sub_index,
                    int audio_stream_index,

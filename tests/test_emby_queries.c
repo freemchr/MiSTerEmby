@@ -130,6 +130,62 @@ static void test_collection_item_types(void)
                collection_item_type("musicvideos"), "MusicVideo");
 }
 
+/* Which sources stream with their video untouched, and what the stream URL
+ * asks Emby for in each case. */
+static void test_direct_stream(void)
+{
+    struct { const char *label, *codec; int w, h, interlaced; double fps; const char *want; } cases[] = {
+        { "SD MPEG-4 (Xvid) copies",       "mpeg4",      720, 390, 0, 23.976, "mpeg4" },
+        { "DivX 3 copies",                 "msmpeg4v3",  640, 352, 0, 25.0,   "msmpeg4v3" },
+        { "progressive MPEG-2 copies",     "mpeg2video", 720, 480, 0, 23.976, "mpeg2video" },
+        { "interlaced DVD transcodes",     "mpeg2video", 720, 576, 1, 25.0,   NULL },
+        { "HD MPEG-4 transcodes",          "mpeg4",     1280, 720, 0, 23.976, NULL },
+        { "SD H.264 transcodes",           "h264",       720, 400, 0, 25.0,   NULL },
+        { "60fps SD transcodes",           "mpeg4",      640, 480, 0, 59.94,  NULL },
+        { "unknown size transcodes",       "mpeg4",        0,   0, 0, 0.0,    NULL },
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        EbItem it = {0};
+        strcpy(it.source_video_codec, cases[i].codec);
+        it.source_width = cases[i].w;
+        it.source_height = cases[i].h;
+        it.source_interlaced = cases[i].interlaced;
+        it.source_fps = cases[i].fps;
+        const char *got = eb_direct_stream_codec(&it);
+        checks++;
+        if ((got == NULL) != (cases[i].want == NULL) ||
+            (got && strcmp(got, cases[i].want) != 0)) {
+            failures++;
+            printf("  FAIL %s: got %s\n", cases[i].label, got ? got : "(transcode)");
+        }
+    }
+
+    EbConfig cfg = config();
+    strcpy(cfg.server, "http://s:8096");
+    strcpy(cfg.token, "tok");
+    strcpy(cfg.device_id, "dev");
+    strcpy(cfg.tv_mode, "NTSC");
+    EbStreamProfile prof = { 720, 576, 12000000 };
+    char url[1024];
+
+    eb_stream_url(&cfg, "123", "mediasource_123", "mpeg4", &prof, 0, "ps", -1, -1, url, sizeof(url));
+    checks++;
+    if (!strstr(url, "&VideoCodec=mpeg4&AllowVideoStreamCopy=true&") || strstr(url, "EnableAutoStreamCopy=false")) {
+        failures++; printf("  FAIL direct-stream url: %s\n", url);
+    }
+    eb_stream_url(&cfg, "123", "mediasource_123", NULL, &prof, 0, "ps", -1, -1, url, sizeof(url));
+    checks++;
+    if (!strstr(url, "&VideoCodec=mpeg4&AllowVideoStreamCopy=false&EnableAutoStreamCopy=false&")) {
+        failures++; printf("  FAIL transcode url: %s\n", url);
+    }
+    checks++;
+    if (!strstr(url, "/emby/Videos/123/stream.ts?Static=false&MediaSourceId=mediasource_123&") ||
+        !strstr(url, "&AudioCodec=mp3&AudioChannels=2&AudioSampleRate=48000") ||
+        !strstr(url, "&MaxFramerate=30&") || !strstr(url, "&DeviceId=dev") || !strstr(url, "&api_key=tok")) {
+        failures++; printf("  FAIL stream url shape: %s\n", url);
+    }
+}
+
 int main(void)
 {
     test_movie_query();
@@ -138,6 +194,7 @@ int main(void)
     test_standard_query();
     test_input_normalization();
     test_collection_item_types();
+    test_direct_stream();
 
     printf("emby queries: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
