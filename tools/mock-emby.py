@@ -90,6 +90,9 @@ VIEWS = [
     {"Id": "view-movies", "Name": "Movies",   "CollectionType": "movies"},
     {"Id": "view-tv",     "Name": "TV Shows", "CollectionType": "tvshows"},
     {"Id": "view-music",  "Name": "Music",    "CollectionType": "music"},
+    # Emby lists Live TV as a view too; the client hides it in favour of its
+    # own Live TV and Recordings tiles.
+    {"Id": "view-livetv", "Name": "Live TV",  "CollectionType": "livetv"},
 ]
 
 
@@ -221,6 +224,21 @@ def build_library():
 
 
 ITEMS, CHILDREN = build_library()
+
+# Live TV: a few channels, each with what's on now, and two recordings.
+CHANNELS = [
+    base_item("channel-%d" % n, name, "TvChannel", ChannelNumber=str(num),
+              CurrentProgram={"Name": prog, "Overview": "Mock programme on " + name})
+    for n, (num, name, prog) in enumerate([
+        (2, "Mock One", "Evening News"), (7, "Mock Seven", "Quiz Night"),
+        (9, "Mock Nine", "Late Movie"), (10, "Mock Ten", "Weather"),
+    ])
+]
+RECORDINGS = [
+    base_item("rec-0", "Recorded Film", "Movie", RunTimeTicks=90 * TICKS_PER_MIN),
+    base_item("rec-1", "Pilot", "Episode", SeriesName="Recorded Show", IndexNumber=1,
+              ParentIndexNumber=1, RunTimeTicks=30 * TICKS_PER_MIN),
+]
 
 # Two collections (Emby BoxSets) over a few of the movies. They sit under a
 # parent that isn't one of VIEWS, like Emby box sets on a server with no
@@ -417,6 +435,13 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/Users/" + USER_ID:
             return self._send({"Id": USER_ID, "Name": USER_NAME})
 
+        if path in ("/LiveTv/Channels", "/LiveTv/Recordings"):
+            rows = CHANNELS if path.endswith("Channels") else RECORDINGS
+            start = int(query.get("StartIndex", ["0"])[0])
+            limit = int(query.get("Limit", ["100"])[0])
+            return self._send({"Items": rows[start:start + limit],
+                               "TotalRecordCount": len(rows)})
+
         if path == "/Users/%s/Views" % USER_ID:
             views = [base_item(v["Id"], v["Name"], "CollectionFolder",
                                CollectionType=v["CollectionType"]) for v in VIEWS]
@@ -556,6 +581,11 @@ class Handler(BaseHTTPRequestHandler):
 
         if not self._authorized():
             return self._send_401()
+        m = re.match(r"^/Items/(channel-\d+)/PlaybackInfo$", path)
+        if m:
+            return self._send({"MediaSources": [{"Id": "ms-" + m.group(1),
+                                                 "LiveStreamId": "live-" + m.group(1)}],
+                               "PlaySessionId": "mock"})
         # Playback reporting / user data writes — accepted and ignored.
         length = int(self.headers.get("Content-Length", 0))
         if length:

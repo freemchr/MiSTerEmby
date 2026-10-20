@@ -37,19 +37,27 @@ Rendered with `tools/run-local.sh` against the bundled mock server (`tools/mock-
 
 - **Emby-style interface**: dark charcoal surfaces, Emby green for focus, progress and played state, rounded tiles and dialogs, button-chip hints along the bottom
 - **Sign in without typing on a gamepad**: an **Emby Connect PIN** (enter it at emby.media/pin from any phone or computer). A local username/password, an Emby Connect account or an API key in `emby.conf` also work. The sign-in is saved, and a revoked one is detected and requested again
-- **Continue Watching, Next Up and Collections** appear as the first home tiles when they have something in them. Collections lists your Emby box sets even if the server shows no Collections library
+- **Continue Watching and Next Up** appear as the first home tiles when they have something in them
 - **Home screen**: a row of library tiles (name and item count) over a dimmed mosaic of that library's covers. LEFT/RIGHT slides between them; SELECT swaps to a plain list
 - **Browsing**: lists with cover art, played badges, resume progress bars, backdrop art behind the list, a live clock, and scrolling for long titles. Large libraries page in as you scroll
 - **Info screen**: backdrop, logo, year, rating, overview, and Play/Resume buttons
-- **Cinema Mode** (opt-in, `CINEMA_MODE` in `emby.conf`): trailers chosen by your Emby server's Cinema Mode settings play before a film started from the beginning; UP skips one
-- **Skip intro and credits**: when Emby has detected a title's intro or credits, a "UP: Skip intro" / "UP: Skip credits" prompt appears at the right moment. Skipping the credits finishes the title and marks it played
-- **Direct streaming for SD files**: DivX/Xvid, MPEG-1 and progressive MPEG-2 files play with their video untouched, so the Emby server only repackages them (`TRANSCODE_ALWAYS` in `emby.conf` turns this off)
 - **Video playback**: server-side transcode to a light MPEG-4 stream the MiSTer can decode in real time, letterboxed or pillarboxed for any source aspect. True interlaced 480i/576i output is supported through the standalone interlaced core (see the [display guide](docs/DISPLAY_COMPATIBILITY.md#interlaced-output))
 - **Track picker** (SELECT during playback): audio tracks, subtitles (text subtitles rendered client-side with live sync adjustment; image subtitles burned in by the server), and picture modes for wide titles (Original / Zoom 4:3 / Stretch)
 - **Music**: Artists → Albums → Tracks, direct-play audio, a now-playing screen with real VU meters and selectable backgrounds (starfield, rain, Nebula, Now Spinning, Tunnel), seek, previous/next, auto-advance, and library shuffle
 - **Sync with Emby**: resume positions and played state are read from and written back to Emby
 - **Emby dashboard integration**: the session shows up with transcoding info; remote pause/play/stop and admin messages work (messages show as a green banner)
 - **UI sounds**, a **SELECT+START screenshot** combo, an **opt-in debug log**, and an **in-app updater** from GitHub releases
+
+### Coming in the next release
+
+These are on the `main` branch but not in the v1.0.0 download yet, and haven't been tested on a MiSTer. They'll ship as v1.1.0 once they have been.
+
+- **Live TV and Recordings**: when the Emby server has Live TV set up, a Live TV tile lists the channels with what's on now, and selecting one tunes straight in. A Recordings tile lists finished recordings, which play like any other title. Live channels can be paused but not seeked
+- **Collections**: a home tile for your Emby box sets, even if the server shows no Collections library
+- **Skip intro and credits**: when Emby has detected a title's intro or credits, a "UP: Skip intro" / "UP: Skip credits" prompt appears at the right moment. Skipping the credits finishes the title and marks it played
+- **Direct streaming for SD files**: DivX/Xvid, MPEG-1 and progressive MPEG-2 files play with their video untouched, so the Emby server only repackages them (`TRANSCODE_ALWAYS` in `emby.conf` turns this off)
+- **Choose a user**: SELECT on the sign-in screen lists the server's users
+- **Cinema Mode** (opt-in, `CINEMA_MODE` in `emby.conf`): trailers chosen by your Emby server's Cinema Mode settings play before a film started from the beginning; UP skips one
 
 ## <a id="requirements"></a>Requirements
 
@@ -99,7 +107,7 @@ MiSTerEmby picks the first method your `emby.conf` allows:
 2. **Username and password**: `USERNAME=` and `PASSWORD=` lines, for a local Emby user.
 3. **Emby Connect account**: `CONNECT_USER=` and `CONNECT_PASSWORD=` lines.
 4. **API key**: `API_KEY=` and `USERNAME=` lines. The older three-line layout (server, key, username) also works.
-5. **Choose a user**: on the PIN screen, SELECT lists the server's users. Picking one without a password signs straight in, which is handy for a shared household server.
+5. **Choose a user** (next release): on the PIN screen, SELECT lists the server's users. Picking one without a password signs straight in, which is handy for a shared household server.
 6. **Emby Connect PIN** (the default with just `SERVER=`): a PIN appears on screen. Go to **emby.media/pin** on any device, sign in to Emby Connect, and enter it. Your Emby user must be linked to that Emby Connect account (Emby: Settings → Users → your user → Emby Connect).
 
 After the first sign-in works you can remove any password lines; the saved sign-in keeps working. `device.conf` holds a random id for this MiSTer. Don't copy it to a second MiSTer that signs in as the same user, or the two will keep signing each other out.
@@ -124,7 +132,7 @@ Button names follow Xbox-style labels (bottom face button = A, right = B). On Ni
 | Info | SELECT | Tab | Play from the start (when there's a resume point) |
 | Video | B | B / Enter / X | Pause / resume |
 | Video | Left / Right | Left / Right | Seek 30s |
-| Video | Up | Up | Skip intro / credits (while the prompt shows) |
+| Video | Up | Up | Skip intro / credits (while the prompt shows; next release) |
 | Video | SELECT | Tab | Track picker |
 | Video | L / R | PageUp / PageDown | VSync on / off |
 | Video | A | Esc | Stop |
@@ -179,6 +187,7 @@ To try the PIN flow against the mock, start the client with `MISTEREMBY_CONNECT_
 - The command socket (remote control, admin messages) only works with `http://` servers. Everything else works over `https://`.
 - The bitmap font covers Latin-1, so other scripts are transliterated or shown as `?`.
 - If mplayer can't open a stream, you're returned to the browser without an error message.
+- Live TV is transcoded like everything else, so a broadcast HD channel needs a server that can transcode it in real time. A NAS without hardware transcoding may not keep up.
 
 ## <a id="credits"></a>Credits
 

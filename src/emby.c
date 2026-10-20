@@ -295,6 +295,11 @@ static void parse_item_fields(const JsonDoc *doc, const JsonNode *item, EbItem *
     else if (!strcmp(type_buf, "MusicAlbum"))    it->type = EB_TYPE_ALBUM;
     else if (!strcmp(type_buf, "Audio"))         it->type = EB_TYPE_TRACK;
     else if (!strcmp(type_buf, "BoxSet"))        it->type = EB_TYPE_FOLDER;   /* a collection */
+    else if (!strcmp(type_buf, "TvChannel"))     it->type = EB_TYPE_CHANNEL;
+    /* A Live TV recording, or a plain video file (home videos, a recording
+     * Emby filed as a Video): either plays like a film. */
+    else if (!strcmp(type_buf, "Recording") ||
+             !strcmp(type_buf, "Video"))         it->type = EB_TYPE_MOVIE;
     else if (!strcmp(type_buf, "CollectionFolder") ||
              !strcmp(type_buf, "Folder"))        it->type = EB_TYPE_FOLDER;
     else                                          it->type = EB_TYPE_OTHER;
@@ -305,6 +310,14 @@ static void parse_item_fields(const JsonDoc *doc, const JsonNode *item, EbItem *
     }
     if (it->type == EB_TYPE_EPISODE)
         copy_display_str(doc, item, "SeriesName", it->series_name, sizeof(it->series_name));
+    if (it->type == EB_TYPE_CHANNEL) {
+        /* What's on now rides in series_name (a channel has no series), and
+         * its description stands in for the channel's own overview. */
+        copy_display_str(doc, item, "CurrentProgram.Name", it->series_name, sizeof(it->series_name));
+        if (!it->overview[0])
+            copy_display_str(doc, item, "CurrentProgram.Overview", it->overview, sizeof(it->overview));
+        copy_raw_str(doc, item, "ChannelNumber", it->year, sizeof(it->year));
+    }
 
     copy_raw_str(doc, item, "CollectionType", it->collection_type, sizeof(it->collection_type));
 
@@ -1566,9 +1579,16 @@ int eb_list_views(const EbConfig *cfg, EbItem *out, int max)
     EbResponse r;
     if (!eb_fetch(cfg, path, &r)) return 0;
     int n = parse_item_list(&r.doc, out, max);
-    for (int i = 0; i < n; i++) out[i].type = EB_TYPE_FOLDER;
+    /* Emby's Live TV view isn't a folder of items; the Live TV and
+     * Recordings home tiles stand in for it. */
+    int kept = 0;
+    for (int i = 0; i < n; i++) {
+        if (!strcmp(out[i].collection_type, "livetv")) continue;
+        if (kept != i) out[kept] = out[i];
+        out[kept++].type = EB_TYPE_FOLDER;
+    }
     eb_response_free(&r);
-    return n;
+    return kept;
 }
 
 int64_t eb_count_items(const EbConfig *cfg, const char *parent_id, const char *item_type)
@@ -1824,6 +1844,111 @@ int eb_list_collections(const EbConfig *cfg, EbItem *out, int max, int64_t *tota
     for (int i = 0; i < n; i++) out[i].type = EB_TYPE_FOLDER;
     eb_response_free(&r);
     return n;
+}
+
+/* ── Live TV ─────────────────────────────────────────────────────────────── */
+
+static void eb_post_json_async(const EbConfig *cfg, const char *path, const char *body);
+static void build_playstate_json(const char *item_id, const char *play_session_id,
+                                  int64_t position_ticks, int is_paused,
+                                  char *out, int outlen);
+
+int eb_list_channels(const EbConfig *cfg, int start_index, EbItem *out, int max,
+                     int64_t *total_out)
+{
+    char path[384];
+    snprintf(path, sizeof(path),
+        "/LiveTv/Channels?UserId=%s&StartIndex=%d&Limit=%d&AddCurrentProgram=true"
+        "&Fields=Overview&EnableUserData=false&ImageTypeLimit=1&EnableImageTypes=Primary"
+        "&EnableTotalRecordCount=true",
+        cfg->user_id, start_index, max);
+
+    EbResponse r;
+    if (!eb_fetch(cfg, path, &r)) return -1;
+    int n = parse_item_list(&r.doc, out, max);
+    parse_total_count(&r.doc, total_out);
+    for (int i = 0; i < n; i++) out[i].type = EB_TYPE_CHANNEL;
+    eb_response_free(&r);
+    return n;
+}
+
+int eb_list_recordings(const EbConfig *cfg, int start_index, EbItem *out, int max,
+                       int64_t *total_out)
+{
+    char path[384];
+    snprintf(path, sizeof(path),
+        "/LiveTv/Recordings?UserId=%s&StartIndex=%d&Limit=%d&IsInProgress=false"
+        "&Fields=Overview,ProductionYear,RunTimeTicks,SeriesName&EnableUserData=true"
+        "&ImageTypeLimit=1&EnableImageTypes=Primary,Backdrop&EnableTotalRecordCount=true",
+        cfg->user_id, start_index, max);
+
+    EbResponse r;
+    if (!eb_fetch(cfg, path, &r)) return -1;
+    int n = parse_item_list(&r.doc, out, max);
+    parse_total_count(&r.doc, total_out);
+    /* Every recording plays; one of a series stays an episode so its row
+     * can carry the show's name. */
+    for (int i = 0; i < n; i++)
+        if (out[i].type != EB_TYPE_EPISODE) out[i].type = EB_TYPE_MOVIE;
+    eb_response_free(&r);
+    return n;
+}
+
+int eb_live_open(const EbConfig *cfg, const char *channel_id,
+                 char *msid_out, int msid_len, char *lsid_out, int lsid_len)
+{
+    char safe_id[EB_ID_LEN];
+    eb_sanitize_id(channel_id, safe_id, sizeof(safe_id));
+    msid_out[0] = lsid_out[0] = '\0';
+
+    char path[256];
+    snprintf(path, sizeof(path),
+        "/Items/%s/PlaybackInfo?UserId=%s&AutoOpenLiveStream=true&IsPlayback=true",
+        safe_id, cfg->user_id);
+
+    EbResponse r;
+    if (!eb_post_fetch(cfg, path, "{}", &r)) return 0;
+    const JsonNode *root = json_root(&r.doc);
+    char msid[EB_ID_LEN + 16] = "", lsid[96] = "";
+    copy_raw_str(&r.doc, root, "MediaSources[0].Id", msid, sizeof(msid));
+    copy_raw_str(&r.doc, root, "MediaSources[0].LiveStreamId", lsid, sizeof(lsid));
+    eb_response_free(&r);
+    if (!msid[0]) return 0;
+    eb_sanitize_id(msid, msid_out, msid_len);
+    if (lsid[0]) eb_sanitize_id(lsid, lsid_out, lsid_len);
+    return 1;
+}
+
+void eb_live_close(const EbConfig *cfg, const char *live_stream_id, int sync)
+{
+    if (!live_stream_id || !live_stream_id[0]) return;
+    char safe[96];
+    eb_sanitize_id(live_stream_id, safe, sizeof(safe));
+    char path[160];
+    snprintf(path, sizeof(path), "/LiveStreams/Close?LiveStreamId=%s", safe);
+    if (sync) eb_post_json(cfg, path, "{}");
+    else      eb_post_json_async(cfg, path, "{}");
+}
+
+void eb_stream_url_add_live(char *url, int outlen, const char *live_stream_id)
+{
+    if (!live_stream_id || !live_stream_id[0]) return;
+    char safe[96];
+    eb_sanitize_id(live_stream_id, safe, sizeof(safe));
+    size_t len = strlen(url);
+    if (len < (size_t)outlen)
+        snprintf(url + len, outlen - len, "&LiveStreamId=%s", safe);
+}
+
+void eb_report_live_stopped(const EbConfig *cfg, const char *item_id,
+                            const char *play_session_id, const char *live_stream_id,
+                            int sync)
+{
+    char body[512];
+    build_playstate_json(item_id, play_session_id, 0, 0, body, sizeof(body));
+    if (sync) eb_post_json(cfg, "/Sessions/Playing/Stopped", body);
+    else      eb_post_json_async(cfg, "/Sessions/Playing/Stopped", body);
+    eb_live_close(cfg, live_stream_id, sync);
 }
 
 int eb_get_item_details(const EbConfig *cfg, const char *item_id, EbItem *out)
@@ -2263,7 +2388,7 @@ void eb_report_progress(const EbConfig *cfg, const char *item_id,
  * was a visible multi-second hang on every exit from playback. */
 typedef struct {
     const EbConfig *cfg;   /* main's g_cfg — outlives every thread */
-    char  path[64];
+    char  path[192];
     char *body;
 } EbAsyncPost;
 
@@ -2357,6 +2482,8 @@ void eb_report_capabilities(const EbConfig *cfg)
 int view_is_resume(const EbItem *v)    { return v->synthetic == EB_SYNTH_RESUME; }
 int view_is_nextup(const EbItem *v)    { return v->synthetic == EB_SYNTH_NEXTUP; }
 int view_is_collections(const EbItem *v) { return v->synthetic == EB_SYNTH_COLLECTIONS; }
+int view_is_livetv(const EbItem *v)    { return v->synthetic == EB_SYNTH_LIVETV; }
+int view_is_recordings(const EbItem *v) { return v->synthetic == EB_SYNTH_RECORDINGS; }
 int view_is_synthetic(const EbItem *v) { return v->synthetic != 0; }
 
 const char *collection_item_type(const char *collection_type)

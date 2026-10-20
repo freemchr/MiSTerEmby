@@ -376,7 +376,9 @@ typedef enum {
     FRAME_VIEWS, FRAME_ITEMS, FRAME_SEASONS, FRAME_EPISODES,
     FRAME_RESUME,   /* Continue Watching — see EB_VIEW_RESUME */
     FRAME_NEXTUP,   /* Next Up          — see EB_VIEW_NEXTUP */
-    FRAME_COLLECTIONS /* Collections    — see EB_VIEW_COLLECTIONS */
+    FRAME_COLLECTIONS, /* Collections   — see EB_VIEW_COLLECTIONS */
+    FRAME_LIVETV,     /* Live TV channels — see EB_VIEW_LIVETV */
+    FRAME_RECORDINGS  /* Live TV recordings — see EB_VIEW_RECORDINGS */
 } FrameKind;
 
 /* Rows fetched for each home row. Both are "what to watch next" lists rather
@@ -694,13 +696,17 @@ static int fetch_frame_window(int start_index)
             { EB_VIEW_RESUME, "Continue Watching", EB_SYNTH_RESUME },
             { EB_VIEW_NEXTUP, "Next Up",  EB_SYNTH_NEXTUP },
             { EB_VIEW_COLLECTIONS, "Collections", EB_SYNTH_COLLECTIONS },
+            { EB_VIEW_LIVETV, "Live TV", EB_SYNTH_LIVETV },
+            { EB_VIEW_RECORDINGS, "Recordings", EB_SYNTH_RECORDINGS },
         };
-        for (int s = 0; s < 3; s++) {
+        for (int s = 0; s < 5; s++) {
             EbItem probe[1];
             int64_t total = 0;
             int got = (s == 0) ? eb_list_resume(&g_cfg, probe, 1, &total)
                     : (s == 1) ? eb_list_nextup(&g_cfg, probe, 1, &total)
-                               : eb_list_collections(&g_cfg, probe, 1, &total);
+                    : (s == 2) ? eb_list_collections(&g_cfg, probe, 1, &total)
+                    : (s == 3) ? eb_list_channels(&g_cfg, 0, probe, 1, &total)
+                               : eb_list_recordings(&g_cfg, 0, probe, 1, &total);
             if (got <= 0) continue;
             if (total <= 0) total = got;
 
@@ -737,6 +743,15 @@ static int fetch_frame_window(int start_index)
     case FRAME_COLLECTIONS:
         g_window_start = 0;
         g_item_count = eb_list_collections(&g_cfg, g_items, EB_PAGE_SIZE, &g_total_count);
+        break;
+    case FRAME_LIVETV:
+        paginated = 1;
+        g_item_count = eb_list_channels(&g_cfg, start_index, g_items, EB_PAGE_SIZE, &g_total_count);
+        break;
+    case FRAME_RECORDINGS:
+        paginated = 1;
+        g_item_count = eb_list_recordings(&g_cfg, start_index, g_items, EB_PAGE_SIZE, &g_total_count);
+        home_row_label_episodes();
         break;
     case FRAME_ITEMS:
         /* Episode counts for series rows used to be fetched here with one
@@ -1538,7 +1553,8 @@ static const char *browse_cover_wanted_id(void)
         (it->type == EB_TYPE_MOVIE || it->type == EB_TYPE_MUSIC_VIDEO ||
          it->type == EB_TYPE_EPISODE ||
          it->type == EB_TYPE_SERIES || it->type == EB_TYPE_SEASON ||
-         it->type == EB_TYPE_ARTIST || it->type == EB_TYPE_ALBUM || it->type == EB_TYPE_TRACK);
+         it->type == EB_TYPE_ARTIST || it->type == EB_TYPE_ALBUM || it->type == EB_TYPE_TRACK ||
+         it->type == EB_TYPE_CHANNEL);
     return wants ? it->id : "";
 }
 
@@ -1750,7 +1766,8 @@ static void start_cover_prefetch(void)
             (it->type == EB_TYPE_MOVIE || it->type == EB_TYPE_MUSIC_VIDEO ||
              it->type == EB_TYPE_EPISODE ||
              it->type == EB_TYPE_SERIES || it->type == EB_TYPE_SEASON ||
-             it->type == EB_TYPE_ARTIST || it->type == EB_TYPE_ALBUM || it->type == EB_TYPE_TRACK);
+             it->type == EB_TYPE_ARTIST || it->type == EB_TYPE_ALBUM || it->type == EB_TYPE_TRACK ||
+             it->type == EB_TYPE_CHANNEL);
         if (!wants) continue;
         snprintf(cp->items[cp->n].id,     EB_ID_LEN, "%s", it->id);
         snprintf(cp->items[cp->n].img_id, EB_ID_LEN, "%s", it->image_item_id);
@@ -1893,6 +1910,10 @@ static void carousel_format_count(const EbItem *it, int64_t count, char *buf, si
     const char *ct = it->collection_type;
     if (view_is_collections(it))
         snprintf(buf, bufsz, "%lld collection%s", (long long)count, count == 1 ? "" : "s");
+    else if (view_is_livetv(it))
+        snprintf(buf, bufsz, "%lld channel%s", (long long)count, count == 1 ? "" : "s");
+    else if (view_is_recordings(it))
+        snprintf(buf, bufsz, "%lld recording%s", (long long)count, count == 1 ? "" : "s");
     else if (view_is_synthetic(it))
         snprintf(buf, bufsz, "%lld item%s", (long long)count, count == 1 ? "" : "s");
     else if (!strcmp(ct, "movies"))
@@ -2251,6 +2272,8 @@ static void draw_browse(FBDev *fb)
             (it->type == EB_TYPE_MOVIE || it->type == EB_TYPE_MUSIC_VIDEO ||
              it->type == EB_TYPE_SERIES))
             snprintf(line1, sizeof(line1), "%s%s (%s)", type_folder_icon(it->type), it->name, it->year);
+        else if (it->type == EB_TYPE_CHANNEL && it->year[0])   /* year holds the channel number */
+            snprintf(line1, sizeof(line1), "%s  %s", it->year, it->name);
         else
             snprintf(line1, sizeof(line1), "%s%s", type_folder_icon(it->type), it->name);
         truncate_to_width(fb, line1, 1, row_max_w);
@@ -2292,6 +2315,11 @@ static void draw_browse(FBDev *fb)
             else if (it->child_count > 0)
                 snprintf(line2, sizeof(line2), "%d season%s",
                          it->child_count, it->child_count == 1 ? "" : "s");
+        } else if (it->type == EB_TYPE_CHANNEL) {
+            if (it->series_name[0]) {
+                snprintf(line2, sizeof(line2), "Now: %s", it->series_name);
+                l2r = 0x8E; l2g = 0xD8; l2b = 0x86;
+            }
         } else if (it->type == EB_TYPE_MOVIE || it->type == EB_TYPE_MUSIC_VIDEO ||
                    it->type == EB_TYPE_EPISODE) {
             int minutes = (int)(it->runtime_ticks / 10000000LL / 60);
@@ -3857,6 +3885,24 @@ static int    g_intro_pos   = -1;
  * than the title reaching its end or a trailer being skipped. */
 static int    g_end_by_user = 0;
 
+/* ── Live TV ───────────────────────────────────────────────────────────────
+ * A channel plays from a live stream the server opened for it (holding a
+ * tuner), so it has to be closed again however playback ends — including a
+ * restart for a new audio track, which opens a fresh one. It never has
+ * watch state: no resume, no played mark, nothing to seek in. */
+static char g_live_stream_id[96] = "";
+static int playing_live(void) { return g_info_item.type == EB_TYPE_CHANNEL; }
+
+static void report_video_stopped(int64_t position_ticks, int watched)
+{
+    if (playing_live()) {
+        eb_report_live_stopped(&g_cfg, g_info_item.id, g_play_session_id, g_live_stream_id, 0);
+        g_live_stream_id[0] = '\0';
+    } else {
+        eb_report_stopped(&g_cfg, g_info_item.id, g_play_session_id, position_ticks, watched);
+    }
+}
+
 #define PLAYER_FRAME_ENDED   0
 #define PLAYER_FRAME_PLAYING 1
 #define PLAYER_FRAME_HANDLED 2
@@ -3869,8 +3915,7 @@ static int player_handle_input(FBDev *fb, int inp, double loop_now)
         pageflip_end();
         double pos = play_position();
         int watched = playback_watched(g_info_item.runtime_ticks, pos);
-        eb_report_stopped(&g_cfg, g_info_item.id, g_play_session_id,
-                           (int64_t)(pos * 10000000.0), watched);
+        report_video_stopped((int64_t)(pos * 10000000.0), watched);
         g_info_item.played = watched;
         g_info_item.resume_ticks = watched ? 0 : (int64_t)(pos * 10000000.0);
         eb_log_line("play: ended on its own at %.0fs, watched=%d", pos, watched);
@@ -3878,8 +3923,7 @@ static int player_handle_input(FBDev *fb, int inp, double loop_now)
     } else if (inp & INP_B) {
         double pos = play_position();
         int watched = playback_watched(g_info_item.runtime_ticks, pos);
-        eb_report_stopped(&g_cfg, g_info_item.id, g_play_session_id,
-                           (int64_t)(pos * 10000000.0), watched);
+        report_video_stopped((int64_t)(pos * 10000000.0), watched);
         g_info_item.played = watched;
         g_info_item.resume_ticks = watched ? 0 : (int64_t)(pos * 10000000.0);
         player_stop();
@@ -3888,8 +3932,8 @@ static int player_handle_input(FBDev *fb, int inp, double loop_now)
         return PLAYER_FRAME_ENDED;
     } else if (g_paused) {
         if (inp & INP_SELECT) { submenu_open(fb); draw_submenu(fb); input_drain(); return PLAYER_FRAME_HANDLED; }
-        if (inp & INP_LEFT)  seek_accumulate(-SEEK_STEP, loop_now);
-        if (inp & INP_RIGHT) seek_accumulate(+SEEK_STEP, loop_now);
+        if ((inp & INP_LEFT)  && !playing_live()) seek_accumulate(-SEEK_STEP, loop_now);
+        if ((inp & INP_RIGHT) && !playing_live()) seek_accumulate(+SEEK_STEP, loop_now);
         if (inp & INP_A) player_pause_toggle();
         if (!g_pageflip_mode) {
             if (inp & INP_L) {
@@ -3920,8 +3964,7 @@ static int player_handle_input(FBDev *fb, int inp, double loop_now)
             }
             if (inp & INP_UP) {
                 double pos = play_position();
-                eb_report_stopped(&g_cfg, g_info_item.id, g_play_session_id,
-                                  (int64_t)(pos * 10000000.0), 0);
+                report_video_stopped((int64_t)(pos * 10000000.0), 0);
                 player_stop();
                 g_end_by_user = 0;
                 eb_log_line("play: skipped trailer %d at %.0fs", g_intro_pos + 1, pos);
@@ -3960,7 +4003,7 @@ static int player_handle_input(FBDev *fb, int inp, double loop_now)
                 int64_t end_ticks = g_info_item.runtime_ticks > 0
                                         ? g_info_item.runtime_ticks
                                         : (int64_t)(pos * 10000000.0);
-                eb_report_stopped(&g_cfg, g_info_item.id, g_play_session_id, end_ticks, 1);
+                report_video_stopped(end_ticks, 1);
                 g_info_item.played = 1;
                 g_info_item.resume_ticks = 0;
                 player_stop();
@@ -3970,8 +4013,8 @@ static int player_handle_input(FBDev *fb, int inp, double loop_now)
         }
 
         if (inp & INP_A) player_pause_toggle();
-        if (inp & INP_LEFT)  seek_accumulate(-SEEK_STEP, loop_now);
-        if (inp & INP_RIGHT) seek_accumulate(+SEEK_STEP, loop_now);
+        if ((inp & INP_LEFT)  && !playing_live()) seek_accumulate(-SEEK_STEP, loop_now);
+        if ((inp & INP_RIGHT) && !playing_live()) seek_accumulate(+SEEK_STEP, loop_now);
         if (!g_pageflip_mode) {
             if (inp & INP_L) {
                 int vf = open(VSYNC_FLAG, O_WRONLY|O_CREAT|O_TRUNC, 0644);
@@ -3984,7 +4027,7 @@ static int player_handle_input(FBDev *fb, int inp, double loop_now)
             }
         }
 
-        if (loop_now - g_last_progress_report >= PROGRESS_REPORT_INTERVAL) {
+        if (loop_now - g_last_progress_report >= PROGRESS_REPORT_INTERVAL && !playing_live()) {
             g_last_progress_report = loop_now;
             report_progress_async(g_info_item.id, g_play_session_id,
                                   (int64_t)(play_position() * 10000000.0), 0);
@@ -4018,14 +4061,29 @@ static void play(FBDev *fb, const char *item_id, double offset_secs)
     int64_t start_ticks = (int64_t)(offset_secs * 10000000.0);
     eb_make_play_session_id(g_play_session_id, sizeof(g_play_session_id));
 
+    /* A restart (new audio track) would otherwise leave the old live stream
+     * holding its tuner. */
+    if (g_live_stream_id[0]) {
+        eb_live_close(&g_cfg, g_live_stream_id, 0);
+        g_live_stream_id[0] = '\0';
+    }
+    if (playing_live()) {
+        start_ticks = 0;
+        if (!eb_live_open(&g_cfg, item_id, g_info_item.media_source_id,
+                          sizeof(g_info_item.media_source_id),
+                          g_live_stream_id, sizeof(g_live_stream_id)))
+            eb_log_line("play: live stream did not open");
+    }
+
     char url[1024];
     const EbStreamProfile profile = stream_profile();
     /* A burned-in subtitle has to be painted into re-encoded video, so it
      * rules out the untouched copy. */
-    const char *copy_codec = (g_burned_in_sub_index < 0 && !g_cfg.transcode_always)
+    const char *copy_codec = (g_burned_in_sub_index < 0 && !g_cfg.transcode_always && !playing_live())
                                ? eb_direct_stream_codec(&g_info_item) : NULL;
     eb_stream_url(&g_cfg, item_id, g_info_item.media_source_id, copy_codec, &profile, start_ticks,
                   g_play_session_id, g_burned_in_sub_index, g_current_audio_index, url, sizeof(url));
+    eb_stream_url_add_live(url, sizeof(url), g_live_stream_id);
     stream_via_curl_if_https(url, sizeof(url));
     /* Deliberately no item_id/title/url here — those identify what's in
      * someone's library, not how MiSTerEmby behaved. */
@@ -5909,6 +5967,10 @@ int main(int argc, char **argv)
                         push_frame(FRAME_NEXTUP, "Next Up", NULL, NULL, NULL, NULL);
                     else if (view_is_collections(it))
                         push_frame(FRAME_COLLECTIONS, "Collections", NULL, NULL, NULL, NULL);
+                    else if (view_is_livetv(it))
+                        push_frame(FRAME_LIVETV, "Live TV", NULL, NULL, NULL, NULL);
+                    else if (view_is_recordings(it))
+                        push_frame(FRAME_RECORDINGS, "Recordings", NULL, NULL, NULL, NULL);
                     else
                         push_frame(FRAME_ITEMS, it->name, it->id, NULL, NULL,
                                    it->collection_type[0] ? it->collection_type : f->collection_type);
@@ -5942,6 +6004,20 @@ int main(int argc, char **argv)
                     info_assets_load(&fb, it, &spinner_frame_ctr);
                     state = STATE_INFO;
                     draw_info(&fb);
+                    input_drain();
+                    break;
+                case EB_TYPE_CHANNEL:
+                    /* A channel has nothing to show before it plays — no
+                     * resume, no runtime — so it tunes straight in. */
+                    g_info_item = *it;
+                    playing = 1;
+                    state = STATE_PLAYING;
+                    g_current_sub_index = -1;
+                    g_burned_in_sub_index = -1;
+                    g_current_audio_index = -1;
+                    g_intro_count = 0;
+                    g_intro_pos = -1;
+                    play(&fb, g_info_item.id, 0.0);
                     input_drain();
                     break;
                 case EB_TYPE_TRACK:
@@ -6233,9 +6309,12 @@ int main(int argc, char **argv)
         double pos = play_position();
         const EbItem *it = (state == STATE_PLAYING_AUDIO && g_audio_queue_pos >= 0)
                                ? &g_items[g_audio_queue_pos] : &g_info_item;
-        eb_report_stopped_sync(&g_cfg, it->id, g_play_session_id,
-                               (int64_t)(pos * 10000000.0),
-                               playback_watched(it->runtime_ticks, pos));
+        if (state == STATE_PLAYING && playing_live())
+            eb_report_live_stopped(&g_cfg, it->id, g_play_session_id, g_live_stream_id, 1);
+        else
+            eb_report_stopped_sync(&g_cfg, it->id, g_play_session_id,
+                                   (int64_t)(pos * 10000000.0),
+                                   playback_watched(it->runtime_ticks, pos));
         eb_log_line("play: stopped by app exit at %.0fs", pos);
     }
 

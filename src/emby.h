@@ -51,6 +51,7 @@ typedef enum {
     EB_TYPE_ARTIST,   /* MusicArtist — drills into albums, browsed like EB_TYPE_FOLDER */
     EB_TYPE_ALBUM,    /* MusicAlbum — drills into tracks, browsed like EB_TYPE_FOLDER */
     EB_TYPE_TRACK,    /* Audio — playable leaf, like EB_TYPE_MOVIE but audio-only */
+    EB_TYPE_CHANNEL,  /* TvChannel — a Live TV channel, played as a live stream */
     EB_TYPE_OTHER
 } EbItemType;
 
@@ -462,12 +463,16 @@ int eb_list_random_tracks(const EbConfig *cfg, const char *parent_id, EbItem *ou
 #define EB_VIEW_RESUME  "misteremby-resume"
 #define EB_VIEW_NEXTUP  "misteremby-nextup"
 #define EB_VIEW_COLLECTIONS "misteremby-collections"
+#define EB_VIEW_LIVETV      "misteremby-livetv"
+#define EB_VIEW_RECORDINGS  "misteremby-recordings"
 
 /* Values for EbItem.synthetic. The ids above remain as grid-cache keys; these
  * are what the code actually branches on. */
 #define EB_SYNTH_RESUME 1
 #define EB_SYNTH_NEXTUP 2
 #define EB_SYNTH_COLLECTIONS 3
+#define EB_SYNTH_LIVETV      4
+#define EB_SYNTH_RECORDINGS  5
 
 /* The two home rows are presented as extra cards on the library carousel, but
  * they aren't libraries — no ParentId to list, no collection type, and their
@@ -476,6 +481,8 @@ int eb_list_random_tracks(const EbConfig *cfg, const char *parent_id, EbItem *ou
 int view_is_resume(const EbItem *v);
 int view_is_nextup(const EbItem *v);
 int view_is_collections(const EbItem *v);
+int view_is_livetv(const EbItem *v);
+int view_is_recordings(const EbItem *v);
 int view_is_synthetic(const EbItem *v);
 
 /* The BaseItemKind that actually represents "one unit" of a library, keyed
@@ -502,6 +509,30 @@ int eb_list_nextup(const EbConfig *cfg, EbItem *out, int max, int64_t *total_out
  * box sets whether or not a Collections library is shown, so this is how
  * they get a home tile on servers without one. */
 int eb_list_collections(const EbConfig *cfg, EbItem *out, int max, int64_t *total_out);
+
+/* Live TV. Channels come back in the server's channel order with what's on
+ * now in series_name and the channel number in year (a channel has
+ * neither). Recordings are finished ones only, and play like films. Both
+ * return -1 when the request fails, 0 on a server without Live TV. */
+int eb_list_channels(const EbConfig *cfg, int start_index, EbItem *out, int max,
+                     int64_t *total_out);
+int eb_list_recordings(const EbConfig *cfg, int start_index, EbItem *out, int max,
+                       int64_t *total_out);
+
+/* A channel has to be opened as a live stream before it can be streamed:
+ * the server tunes it and hands back the media source and live stream ids
+ * that go on the stream URL (eb_stream_url_add_live). Returns 0 if the
+ * server couldn't open it (no free tuner, say). eb_live_close releases the
+ * tuner; eb_report_live_stopped also ends the dashboard session, and never
+ * touches watch state. sync=1 is for app exit, where a background thread
+ * would never get to run. */
+int  eb_live_open(const EbConfig *cfg, const char *channel_id,
+                  char *msid_out, int msid_len, char *lsid_out, int lsid_len);
+void eb_live_close(const EbConfig *cfg, const char *live_stream_id, int sync);
+void eb_stream_url_add_live(char *url, int outlen, const char *live_stream_id);
+void eb_report_live_stopped(const EbConfig *cfg, const char *item_id,
+                            const char *play_session_id, const char *live_stream_id,
+                            int sync);
 
 /* TV hierarchy. */
 int eb_list_seasons(const EbConfig *cfg, const char *series_id, EbItem *out, int max);

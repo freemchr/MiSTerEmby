@@ -184,6 +184,18 @@ static void test_direct_stream(void)
         !strstr(url, "&MaxFramerate=30&") || !strstr(url, "&DeviceId=dev") || !strstr(url, "&api_key=tok")) {
         failures++; printf("  FAIL stream url shape: %s\n", url);
     }
+
+    /* A live stream id goes on the end, sanitized like every other id. */
+    size_t before = strlen(url);
+    eb_stream_url_add_live(url, sizeof(url), "ms1_live&x=1");
+    checks++;
+    if (strcmp(url + before, "&LiveStreamId=ms1_live_x_1") != 0) {
+        failures++; printf("  FAIL live stream id: %s\n", url + before);
+    }
+    before = strlen(url);
+    eb_stream_url_add_live(url, sizeof(url), "");
+    checks++;
+    if (strlen(url) != before) { failures++; printf("  FAIL empty live stream id appended\n"); }
 }
 
 static void test_markers(void)
