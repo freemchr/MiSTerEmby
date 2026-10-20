@@ -4329,7 +4329,7 @@ static int    g_end_by_user = 0;
  * tuner), so it has to be closed again however playback ends — including a
  * restart for a new audio track, which opens a fresh one. It never has
  * watch state: no resume, no played mark, nothing to seek in. */
-static char g_live_stream_id[96] = "";
+static char g_live_stream_id[EB_LIVE_ID_LEN] = "";
 static int playing_live(void) { return g_info_item.type == EB_TYPE_CHANNEL; }
 
 static void report_video_stopped(int64_t position_ticks, int watched)
@@ -4484,7 +4484,7 @@ static int player_handle_input(FBDev *fb, int inp, double loop_now)
 typedef struct {
     char id[EB_ID_LEN];
     char msid[EB_ID_LEN + 16];
-    char lsid[96];
+    char lsid[EB_LIVE_ID_LEN];
     int  ok, done, cancelled;
     pthread_mutex_t lock;
 } LiveOpenJob;

@@ -192,6 +192,16 @@ static void test_direct_stream(void)
     if (strcmp(url + before, "&LiveStreamId=ms1_live_x_1") != 0) {
         failures++; printf("  FAIL live stream id: %s\n", url + before);
     }
+    /* A real Emby live stream id is 98 characters; it must arrive whole. */
+    const char *real_id =
+        "06044cf0e6f93cdae5f285c9ecfaaeb4_01413a525b3a9622ce6fdf19f7dde354_408d226e0a1d38b7a5c514e9017e6055";
+    eb_stream_url(&cfg, "46651", "408d", NULL, &prof, 0, "ps", -1, -1, url, sizeof(url));
+    before = strlen(url);
+    eb_stream_url_add_live(url, sizeof(url), real_id);
+    checks++;
+    if (strncmp(url + before, "&LiveStreamId=", 14) != 0 || strcmp(url + before + 14, real_id) != 0) {
+        failures++; printf("  FAIL long live stream id: %s\n", url + before);
+    }
     before = strlen(url);
     eb_stream_url_add_live(url, sizeof(url), "");
     checks++;

@@ -2020,7 +2020,7 @@ int eb_live_open(const EbConfig *cfg, const char *channel_id,
     EbResponse r;
     if (!eb_post_fetch_timeout(cfg, path, "{}", &r, 30)) return 0;
     const JsonNode *root = json_root(&r.doc);
-    char msid[EB_ID_LEN + 16] = "", lsid[96] = "";
+    char msid[EB_ID_LEN + 16] = "", lsid[EB_LIVE_ID_LEN] = "";
     copy_raw_str(&r.doc, root, "MediaSources[0].Id", msid, sizeof(msid));
     copy_raw_str(&r.doc, root, "MediaSources[0].LiveStreamId", lsid, sizeof(lsid));
     eb_response_free(&r);
@@ -2033,9 +2033,9 @@ int eb_live_open(const EbConfig *cfg, const char *channel_id,
 void eb_live_close(const EbConfig *cfg, const char *live_stream_id, int sync)
 {
     if (!live_stream_id || !live_stream_id[0]) return;
-    char safe[96];
+    char safe[EB_LIVE_ID_LEN];
     eb_sanitize_id(live_stream_id, safe, sizeof(safe));
-    char path[160];
+    char path[64 + EB_LIVE_ID_LEN];
     snprintf(path, sizeof(path), "/LiveStreams/Close?LiveStreamId=%s", safe);
     if (sync) eb_post_json(cfg, path, "{}");
     else      eb_post_json_async(cfg, path, "{}");
@@ -2044,7 +2044,7 @@ void eb_live_close(const EbConfig *cfg, const char *live_stream_id, int sync)
 void eb_stream_url_add_live(char *url, int outlen, const char *live_stream_id)
 {
     if (!live_stream_id || !live_stream_id[0]) return;
-    char safe[96];
+    char safe[EB_LIVE_ID_LEN];
     eb_sanitize_id(live_stream_id, safe, sizeof(safe));
     size_t len = strlen(url);
     if (len < (size_t)outlen)
@@ -2499,7 +2499,7 @@ void eb_report_progress(const EbConfig *cfg, const char *item_id,
  * was a visible multi-second hang on every exit from playback. */
 typedef struct {
     const EbConfig *cfg;   /* main's g_cfg — outlives every thread */
-    char  path[192];
+    char  path[64 + EB_LIVE_ID_LEN];   /* the longest is a LiveStreams/Close */
     char *body;
 } EbAsyncPost;
 

@@ -546,6 +546,9 @@ int eb_list_recordings(const EbConfig *cfg, int start_index, EbItem *out, int ma
  * tuner; eb_report_live_stopped also ends the dashboard session, and never
  * touches watch state. sync=1 is for app exit, where a background thread
  * would never get to run. */
+/* Room for a live stream id: Emby's are three 32-character hex ids joined by
+ * underscores (98 characters), longer than any item id. */
+#define EB_LIVE_ID_LEN 160
 int  eb_live_open(const EbConfig *cfg, const char *channel_id,
                   char *msid_out, int msid_len, char *lsid_out, int lsid_len);
 void eb_live_close(const EbConfig *cfg, const char *live_stream_id, int sync);
