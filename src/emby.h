@@ -337,6 +337,18 @@ void eb_device_id_init(EbConfig *cfg);
  * credentials, -1 = request failed (unreachable). */
 int eb_authenticate_by_name(EbConfig *cfg);
 
+/* One entry from the server's public user list (/Users/Public) — the
+ * accounts Emby shows on its own sign-in screen. */
+typedef struct {
+    char id[EB_ID_LEN];
+    char name[64];
+    int  has_password;
+} EbPublicUser;
+
+/* Fills out[] with the server's visible users. Returns the count, or -1 if
+ * the request failed. */
+int eb_list_public_users(const EbConfig *cfg, EbPublicUser *out, int max);
+
 /* Emby Connect account sign-in with a name/email and password. 1 on success. */
 int eb_connect_login(const EbConfig *cfg, EbConnectAuth *ca);
 

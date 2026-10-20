@@ -1265,6 +1265,28 @@ int eb_authenticate_by_name(EbConfig *cfg)
     return eb_take_credential(cfg, token, user_id, username) ? 1 : 0;
 }
 
+int eb_list_public_users(const EbConfig *cfg, EbPublicUser *out, int max)
+{
+    EbResponse r;
+    if (!eb_fetch(cfg, "/Users/Public", &r)) return -1;
+    int n = 0;
+    JSON_FOREACH(&r.doc, json_root(&r.doc), u) {
+        if (n >= max) break;
+        EbPublicUser *p = &out[n];
+        memset(p, 0, sizeof(*p));
+        copy_raw_str(&r.doc, u, "Id", p->id, sizeof(p->id));
+        copy_display_str(&r.doc, u, "Name", p->name, sizeof(p->name));
+        /* HasPassword is the field Emby's own sign-in screen keys off;
+         * older servers only send HasConfiguredPassword. */
+        const JsonNode *hp = json_find(&r.doc, u, "HasPassword");
+        if (!hp) hp = json_find(&r.doc, u, "HasConfiguredPassword");
+        p->has_password = json_as_bool(hp, 1);
+        if (p->id[0] && p->name[0] && eb_credential_is_sane(p->name)) n++;
+    }
+    eb_response_free(&r);
+    return n;
+}
+
 /* ── Emby Connect (connect.emby.media) ───────────────────────────────────── */
 
 #define EB_CONNECT_BASE "https://connect.emby.media/service"

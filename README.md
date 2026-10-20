@@ -98,7 +98,8 @@ MiSTerEmby picks the first method your `emby.conf` allows:
 2. **Username and password**: `USERNAME=` and `PASSWORD=` lines, for a local Emby user.
 3. **Emby Connect account**: `CONNECT_USER=` and `CONNECT_PASSWORD=` lines.
 4. **API key**: `API_KEY=` and `USERNAME=` lines. The older three-line layout (server, key, username) also works.
-5. **Emby Connect PIN** (the default with just `SERVER=`): a PIN appears on screen. Go to **emby.media/pin** on any device, sign in to Emby Connect, and enter it. Your Emby user must be linked to that Emby Connect account (Emby: Settings → Users → your user → Emby Connect).
+5. **Choose a user**: on the PIN screen, SELECT lists the server's users. Picking one without a password signs straight in, which is handy for a shared household server.
+6. **Emby Connect PIN** (the default with just `SERVER=`): a PIN appears on screen. Go to **emby.media/pin** on any device, sign in to Emby Connect, and enter it. Your Emby user must be linked to that Emby Connect account (Emby: Settings → Users → your user → Emby Connect).
 
 After the first sign-in works you can remove any password lines; the saved sign-in keeps working. `device.conf` holds a random id for this MiSTer. Don't copy it to a second MiSTer that signs in as the same user, or the two will keep signing each other out.
 

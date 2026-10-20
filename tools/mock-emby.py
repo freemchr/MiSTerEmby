@@ -395,7 +395,7 @@ class Handler(BaseHTTPRequestHandler):
         # Everything needs a credential except the public info call and
         # image requests — Emby serves artwork without auth, and the client
         # relies on that: covers are fetched with a bare curl.
-        exempt = path == "/System/Info/Public" or "/Images/" in path
+        exempt = path in ("/System/Info/Public", "/Users/Public") or "/Images/" in path
         if path == "/Connect/Exchange":
             if self._token() != CONNECT_ACCESS_KEY:
                 return self._send_401()
@@ -403,6 +403,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._send({"LocalUserId": USER_ID, "AccessToken": "mock-access-token"})
         if not exempt and not self._authorized():
             return self._send_401()
+
+        if path == "/Users/Public":
+            # Emby's sign-in screen list: one password user, one without.
+            return self._send([{"Id": USER_ID, "Name": USER_NAME, "HasPassword": True},
+                               {"Id": USER_ID, "Name": "Kids", "HasPassword": False}])
 
         if path == "/System/Info/Public":
             return self._send({"ServerName": "Mock Emby", "Version": "4.9.1.0", "Id": "mockserver"})
@@ -534,7 +539,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/Users/AuthenticateByName":
             body = self._form()
-            if body.get("Username") != USER_NAME or body.get("Pw") != "mockpass":
+            ok = ((body.get("Username") == USER_NAME and body.get("Pw") == "mockpass") or
+                  (body.get("Username") == "Kids" and body.get("Pw", "") == ""))
+            if not ok:
                 return self._send({"Error": "Invalid username or password"}, status=401)
             VALID_TOKENS.add("mock-access-token")
             return self._send({"AccessToken": "mock-access-token",

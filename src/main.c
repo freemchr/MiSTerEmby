@@ -369,7 +369,7 @@ static void fmt_time(char *buf, size_t sz, double secs)
 /* ── app state ────────────────────────────────────────────────────────────── */
 
 typedef enum {
-    STATE_CONFIG_ERROR, STATE_CONNECT_PIN,
+    STATE_CONFIG_ERROR, STATE_CONNECT_PIN, STATE_USER_PICK,
     STATE_BROWSE, STATE_INFO, STATE_PLAYING, STATE_PLAYING_AUDIO
 } AppState;
 typedef enum {
@@ -1259,6 +1259,9 @@ typedef enum {
 } PinState;
 
 static pthread_mutex_t g_pin_mutex = PTHREAD_MUTEX_INITIALIZER;
+/* Set to stop the PIN thread early — when a user is chosen from the list
+ * instead, the thread must be gone before that sign-in touches g_cfg. */
+static volatile int g_pin_cancel = 0;
 static PinState g_pin_state = PIN_STARTING;
 static char     g_pin_code[16] = "";
 
@@ -1303,9 +1306,9 @@ static void *connect_pin_thread(void *arg)
     int elapsed = 0, consecutive_errors = 0, confirmed = 0;
     while (g_running) {
         /* Slept in short slices so quitting stays responsive. */
-        for (int slept = 0; slept < PIN_POLL_INTERVAL_SEC * 10 && g_running; slept++)
+        for (int slept = 0; slept < PIN_POLL_INTERVAL_SEC * 10 && g_running && !g_pin_cancel; slept++)
             usleep(100 * 1000);
-        if (!g_running) return NULL;
+        if (!g_running || g_pin_cancel) return NULL;
         elapsed += PIN_POLL_INTERVAL_SEC;
 
         int poll = eb_pin_poll(&g_cfg, &pin);
@@ -1322,7 +1325,7 @@ static void *connect_pin_thread(void *arg)
         if (elapsed >= PIN_TIMEOUT_SEC) break;
     }
     if (!confirmed) { pin_set_state(PIN_FAILED); return NULL; }
-    if (!g_running) return NULL;
+    if (!g_running || g_pin_cancel) return NULL;
 
     EbConnectAuth ca;
     if (!eb_pin_exchange(&g_cfg, &pin, &ca)) { pin_set_state(PIN_FAILED); return NULL; }
@@ -1333,6 +1336,47 @@ static void *connect_pin_thread(void *arg)
     eb_token_save(&g_cfg);   /* so this is a one-time step, not a per-launch one */
     pin_set_state(PIN_AUTHENTICATED);
     return NULL;
+}
+
+/* ── choosing an Emby user ───────────────────────────────────────────────── */
+
+#define USER_PICK_MAX 16
+static EbPublicUser g_users[USER_PICK_MAX];
+static int          g_user_count = 0;
+static int          g_user_sel   = 0;
+static char         g_user_msg[96] = "";
+
+static void draw_user_pick(FBDev *fb)
+{
+    theme_backdrop(fb);
+    int shown = g_user_count < 8 ? g_user_count : 8;
+    int row_h = 16;
+    int card_w = 420, card_h = 30 + 10 + shown * row_h + 26;
+    int card_x = (fb->width - card_w) / 2;
+    int card_y = (fb->height - 8 - SAFE_Y_BOT - 6 - card_h) / 2 + 4;
+    if (card_y < SAFE_Y) card_y = SAFE_Y;
+    theme_dialog(fb, card_x, card_y, card_w, card_h, "Who's watching?");
+
+    int first = g_user_sel >= shown ? g_user_sel - shown + 1 : 0;
+    int y = card_y + 40;
+    for (int i = first; i < first + shown && i < g_user_count; i++) {
+        int sel = (i == g_user_sel);
+        if (sel) theme_round_rect(fb, card_x + 8, y - 4, card_w - 16, row_h, 4, THEME_GREEN, 235);
+        if (sel) draw_text(fb, card_x + 18, y, g_users[i].name, 1, COL_SEL_FG);
+        else     draw_text(fb, card_x + 18, y, g_users[i].name, 1, COL_ITEM);
+        if (g_users[i].has_password) {
+            const char *pw = "password";
+            int px = card_x + card_w - 18 - text_width(fb, pw, 1);
+            if (sel) draw_text(fb, px, y, pw, 1, 0xE0, 0xF4, 0xDE);
+            else     draw_text(fb, px, y, pw, 1, COL_DIM);
+        }
+        y += row_h;
+    }
+    const char *msg = g_user_msg[0] ? g_user_msg : "Users with a password: use the PIN or emby.conf";
+    draw_text(fb, (fb->width - text_width(fb, msg, 1)) / 2, card_y + card_h - 16, msg, 1,
+              g_user_msg[0] ? 0xE5 : 0x8C, g_user_msg[0] ? 0x5B : 0x8C, g_user_msg[0] ? 0x5B : 0x8C);
+    theme_hint_bar(fb, "UP/DOWN:choose  B:sign in  A:back to PIN");
+    fb_flip(fb);
 }
 
 static void draw_connect_pin(FBDev *fb)
@@ -1413,7 +1457,9 @@ static void draw_connect_pin(FBDev *fb)
     }
 #undef PIN_CENTER
 
-    theme_hint_bar(fb, (state == PIN_FAILED || state == PIN_NOT_LINKED) ? "B:new PIN  A:exit" : "A:exit");
+    theme_hint_bar(fb, (state == PIN_FAILED || state == PIN_NOT_LINKED)
+                           ? "B:new PIN  SELECT:choose user  A:exit"
+                           : "SELECT:choose user  A:exit");
     fb_flip(fb);
 }
 
@@ -5672,9 +5718,65 @@ int main(int argc, char **argv)
                 input_drain();
                 break;
             }
+            /* SELECT: pick one of the server's users instead — a household
+             * account without a password signs in with no PIN at all. */
+            if (inp & INP_SELECT) {
+                g_user_count = eb_list_public_users(&g_cfg, g_users, USER_PICK_MAX);
+                if (g_user_count > 0) {
+                    g_user_sel = 0;
+                    g_user_msg[0] = '\0';
+                    state = STATE_USER_PICK;
+                    draw_user_pick(&fb);
+                    input_drain();
+                    break;
+                }
+                g_user_count = 0;
+            }
             if (inp & (INP_A | INP_B)) { g_running = 0; break; }
 
-            draw_connect_pin(&fb);   /* every frame, for the starfield */
+            draw_connect_pin(&fb);   /* every frame, for the background */
+            break;
+        }
+
+        case STATE_USER_PICK: {
+            if (inp & INP_UP)   g_user_sel = (g_user_sel + g_user_count - 1) % g_user_count;
+            if (inp & INP_DOWN) g_user_sel = (g_user_sel + 1) % g_user_count;
+            if (inp & INP_B) {             /* "A: back to PIN" */
+                state = STATE_CONNECT_PIN;
+                input_drain();
+                break;
+            }
+            if (inp & INP_A) {             /* "B: sign in" */
+                const EbPublicUser *u = &g_users[g_user_sel];
+                if (u->has_password) {
+                    snprintf(g_user_msg, sizeof(g_user_msg), "%.40s has a password - use the PIN", u->name);
+                } else {
+                    /* Stop the PIN thread before this sign-in writes g_cfg. */
+                    g_pin_cancel = 1;
+                    if (pin_running) { pthread_join(pin_tid, NULL); pin_running = 0; }
+                    memset(g_cfg.username, 0, sizeof(g_cfg.username));
+                    strncpy(g_cfg.username, u->name, sizeof(g_cfg.username) - 1);
+                    g_cfg.password[0] = '\0';
+                    int ok = eb_authenticate_by_name(&g_cfg);
+                    if (ok == 1) {
+                        eb_token_save(&g_cfg);
+                        eb_log_line("startup: signed in by choosing a user");
+                        startup_enter_browse();
+                        state = STATE_BROWSE;
+                        start_grid_prefetch(&fb);
+                        draw_browse(&fb);
+                        input_drain();
+                        break;
+                    }
+                    snprintf(g_user_msg, sizeof(g_user_msg), "Sign-in failed - try the PIN");
+                    /* Restart the PIN so going back to it still works. */
+                    g_pin_cancel = 0;
+                    pin_set_state(PIN_STARTING);
+                    pthread_create(&pin_tid, NULL, connect_pin_thread, NULL);
+                    pin_running = 1;
+                }
+            }
+            draw_user_pick(&fb);
             break;
         }
 
