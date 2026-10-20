@@ -6,7 +6,9 @@ Reads assets/logo.png (the full MiSTerEmby logo on a transparent background,
 360px — big enough for the largest size the app draws it at) and
 assets/icon.png (just the logo's monitor, for the top bar and dialog
 headers) and assets/wordmark.png (just its "MiSTer Emby" lettering, for the
-home screen's top bar), and writes src/logo_png.h, byte arrays the app decodes with
+home screen's top bar), plus the section titles in assets/titles/ (the top
+bar's title inside Movies, TV Shows, Live TV and Trailers), and writes
+src/logo_png.h, byte arrays the app decodes with
 stb_image on first use.
 Built in rather than shipped beside the binary, so the release zip, the
 in-app updater and the Downloader databases need nothing new.
@@ -31,4 +33,6 @@ with open("src/logo_png.h", "w") as f:
     emit(f, "logo_png", "assets/logo.png")
     emit(f, "icon_png", "assets/icon.png")
     emit(f, "wordmark_png", "assets/wordmark.png")
+    for name in ("movies", "tvshows", "livetv", "trailers"):
+        emit(f, "title_%s_png" % name, "assets/titles/%s.png" % name)
     f.write("#endif\n")

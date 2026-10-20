@@ -376,7 +376,8 @@ typedef enum {
     FRAME_RESUME,   /* Continue Watching — see EB_VIEW_RESUME */
     FRAME_NEXTUP,   /* Next Up          — see EB_VIEW_NEXTUP */
     FRAME_COLLECTIONS, /* Collections   — see EB_VIEW_COLLECTIONS */
-    FRAME_LIVETV,     /* Live TV channels — see EB_VIEW_LIVETV */
+    FRAME_LIVETV,     /* Live TV: its playlists and categories — see EB_VIEW_LIVETV */
+    FRAME_LIVE_CHANNELS, /* one playlist's or category's channels */
     FRAME_RECORDINGS  /* Live TV recordings — see EB_VIEW_RECORDINGS */
 } FrameKind;
 
@@ -652,6 +653,50 @@ static void home_row_label_episodes(void)
     }
 }
 
+/* Live TV's own menu: one entry per TV source (M3U playlist) when the
+ * signed-in user can see them, then every channel category, then all
+ * channels — 11,000 channels in one list is no way to find anything. The
+ * playlist split costs a few dozen tiny requests, so it's kept for ten
+ * minutes rather than redone on every visit. */
+static int live_tv_menu(EbItem *out, int max)
+{
+    static EbLivePlaylist pls[16];
+    static int    pl_count = -1;
+    static double pl_at = 0.0;
+    if (pl_count < 0 || now_sec() - pl_at > 600.0) {
+        pl_count = eb_live_playlists(&g_cfg, pls, 16);
+        pl_at = now_sec();
+    }
+
+    int n = 0;
+    for (int i = 0; i < pl_count && n < max; i++, n++) {
+        EbItem *it = &out[n];
+        memset(it, 0, sizeof(*it));
+        snprintf(it->id, sizeof(it->id), "%d,%d", pls[i].start, pls[i].count);
+        snprintf(it->name, sizeof(it->name), "%s", pls[i].name);
+        it->type = EB_TYPE_FOLDER;
+        it->synthetic = EB_SYNTH_LIVE_PLAYLIST;
+        it->child_count = pls[i].count;
+        it->index_number = -1;
+    }
+    int t = eb_list_channel_tags(&g_cfg, out + n, max - n - 1);
+    for (int i = 0; i < t; i++) {
+        out[n + i].synthetic = EB_SYNTH_LIVE_TAG;
+        out[n + i].image_tag[0] = '\0';   /* Emby's tag art is a generic placeholder */
+        out[n + i].backdrop_tag[0] = '\0';
+    }
+    if (t > 0) n += t;
+    if (n < max) {
+        EbItem *it = &out[n++];
+        memset(it, 0, sizeof(*it));
+        snprintf(it->name, sizeof(it->name), "All channels");
+        it->type = EB_TYPE_FOLDER;
+        it->synthetic = EB_SYNTH_LIVE_TAG;   /* no tag id: every channel */
+        it->index_number = -1;
+    }
+    return n;
+}
+
 /* Loads the window of the current frame's list that starts at start_index.
  * Only the list itself moves — the frame stack, and which frame is current,
  * are untouched, so this is equally the "open this frame" path (start 0) and
@@ -706,7 +751,7 @@ static int fetch_frame_window(int start_index)
             int got = (s == 0) ? eb_list_resume(&g_cfg, probe, 1, &total)
                     : (s == 1) ? eb_list_nextup(&g_cfg, probe, 1, &total)
                     : (s == 2) ? eb_list_collections(&g_cfg, probe, 1, &total)
-                    : (s == 3) ? eb_list_channels(&g_cfg, 0, probe, 1, &total)
+                    : (s == 3) ? eb_list_channels(&g_cfg, NULL, 0, probe, 1, &total)
                                : eb_list_recordings(&g_cfg, 0, probe, 1, &total);
             if (got <= 0) continue;
             if (total <= 0) total = got;
@@ -746,9 +791,20 @@ static int fetch_frame_window(int start_index)
         g_item_count = eb_list_collections(&g_cfg, g_items, EB_PAGE_SIZE, &g_total_count);
         break;
     case FRAME_LIVETV:
-        paginated = 1;
-        g_item_count = eb_list_channels(&g_cfg, start_index, g_items, EB_PAGE_SIZE, &g_total_count);
+        g_window_start = 0;
+        g_item_count = live_tv_menu(g_items, EB_MAX_ITEMS);
         break;
+    case FRAME_LIVE_CHANNELS: {
+        paginated = 1;
+        int first = 0, count = 0;
+        if (f->series_id[0] && sscanf(f->series_id, "%d,%d", &first, &count) == 2)
+            g_item_count = eb_list_playlist_channels(&g_cfg, first, count, start_index,
+                                                     g_items, EB_PAGE_SIZE, &g_total_count);
+        else
+            g_item_count = eb_list_channels(&g_cfg, f->parent_id, start_index,
+                                            g_items, EB_PAGE_SIZE, &g_total_count);
+        break;
+    }
     case FRAME_RECORDINGS:
         paginated = 1;
         g_item_count = eb_list_recordings(&g_cfg, start_index, g_items, EB_PAGE_SIZE, &g_total_count);
@@ -1765,12 +1821,14 @@ static void draw_top_bar(FBDev *fb, const char *title)
     int clock_x = draw_clock(fb);
 
     /* The home screen's title is the app's own name: the logo's lettering,
-     * filling the bar. Everywhere else, the logo's monitor and the screen
-     * title. */
+     * filling the bar, and the main sections have their own titles in the
+     * same style. Everywhere else, the logo's monitor and the screen title. */
     if (!strcmp(title, "MiSTerEmby")) {
         theme_brand_wordmark(fb, SAFE_X, 3, SAFE_Y + 12);
         return;
     }
+    /* The main sections have their own title artwork in the same style. */
+    if (theme_section_title(fb, title, SAFE_X, 3, SAFE_Y + 12)) return;
     int logo_h = 16;   /* the title's own height (2x font) */
     int logo_w = theme_logo(fb, SAFE_X, SAFE_Y, logo_h);
 
@@ -2129,7 +2187,7 @@ static int browse_grid_kind_raw(void)
     BrowseFrame *f = &g_stack[g_stack_depth - 1];
     if (g_item_count == 0) return GRID_NONE;
     if (f->kind == FRAME_VIEWS || f->kind == FRAME_RESUME || f->kind == FRAME_NEXTUP ||
-        f->kind == FRAME_LIVETV || f->kind == FRAME_RECORDINGS)
+        f->kind == FRAME_LIVETV || f->kind == FRAME_LIVE_CHANNELS || f->kind == FRAME_RECORDINGS)
         return GRID_NONE;
     int posters = 0, stills = 0;
     for (int i = 0; i < g_item_count; i++) {
@@ -2679,6 +2737,9 @@ static void draw_browse(FBDev *fb)
             else if (it->child_count > 0)
                 snprintf(line2, sizeof(line2), "%d season%s",
                          it->child_count, it->child_count == 1 ? "" : "s");
+        } else if (it->synthetic == EB_SYNTH_LIVE_PLAYLIST) {
+            snprintf(line2, sizeof(line2), "%d channel%s", it->child_count,
+                     it->child_count == 1 ? "" : "s");
         } else if (it->type == EB_TYPE_CHANNEL) {
             if (it->series_name[0]) {
                 snprintf(line2, sizeof(line2), "Now: %s", it->series_name);
@@ -4405,53 +4466,83 @@ static int player_handle_input(FBDev *fb, int inp, double loop_now)
 
 /* Opening a channel can take the server many seconds (it tunes it first),
  * so it runs on a thread while a "Tuning in" card and the spinner show —
- * blocking the main thread silently there read as a freeze. */
+ * blocking the main thread silently there read as a freeze. A (back)
+ * cancels: the thread is left to finish on its own and closes whatever the
+ * server opened by then, so no tuner is left held. */
 typedef struct {
     char id[EB_ID_LEN];
     char msid[EB_ID_LEN + 16];
     char lsid[96];
-    int  ok;
-    volatile int done;
+    int  ok, done, cancelled;
+    pthread_mutex_t lock;
 } LiveOpenJob;
 
 static void *live_open_thread(void *arg)
 {
     LiveOpenJob *j = arg;
-    j->ok = eb_live_open(&g_cfg, j->id, j->msid, sizeof(j->msid), j->lsid, sizeof(j->lsid));
+    int ok = eb_live_open(&g_cfg, j->id, j->msid, sizeof(j->msid), j->lsid, sizeof(j->lsid));
+    pthread_mutex_lock(&j->lock);
+    j->ok = ok;
     j->done = 1;
+    int cancelled = j->cancelled;
+    pthread_mutex_unlock(&j->lock);
+    if (cancelled) {
+        /* Nobody is waiting any more: release it and clean up. */
+        if (ok) eb_live_close(&g_cfg, j->lsid, 1);
+        pthread_mutex_destroy(&j->lock);
+        free(j);
+    }
     return NULL;
 }
 
+/* 1 = opened, 0 = the server couldn't, -1 = the user cancelled. */
 static int live_open_with_spinner(FBDev *fb, const char *item_id)
 {
-    LiveOpenJob job;
-    memset(&job, 0, sizeof(job));
-    snprintf(job.id, sizeof(job.id), "%s", item_id);
+    LiveOpenJob *job = calloc(1, sizeof(*job));
+    if (!job) return 0;
+    snprintf(job->id, sizeof(job->id), "%s", item_id);
+    pthread_mutex_init(&job->lock, NULL);
     pthread_t t;
-    if (pthread_create(&t, NULL, live_open_thread, &job) != 0)
-        live_open_thread(&job);
-    else {
-        char msg[EB_NAME_LEN + 16];
-        snprintf(msg, sizeof(msg), "Tuning in to %s", g_info_item.name);
-        int frame = 0;
-        while (!job.done) {
-            theme_backdrop(fb);
-            int w = fb->width - 2 * SAFE_X - 40;
-            if (w > 420) w = 420;
-            int h = 64, x = (fb->width - w) / 2, y = (fb->height - h) / 2;
-            theme_dialog(fb, x, y, w, h, "Live TV");
-            truncate_to_width(fb, msg, 1, w - 24);
-            draw_text(fb, (fb->width - text_width(fb, msg, 1)) / 2, y + 40, msg, 1, COL_ITEM);
-            draw_spinner_frame(fb, frame++);
-            fb_flip(fb);
-            usleep(SPINNER_BLINK_MS * 1000);
-        }
-        pthread_join(t, NULL);
+    if (pthread_create(&t, NULL, live_open_thread, job) != 0) {
+        pthread_mutex_destroy(&job->lock);
+        free(job);
+        return 0;
     }
-    if (!job.ok) return 0;
-    snprintf(g_info_item.media_source_id, sizeof(g_info_item.media_source_id), "%s", job.msid);
-    snprintf(g_live_stream_id, sizeof(g_live_stream_id), "%s", job.lsid);
-    return 1;
+    pthread_detach(t);
+
+    char msg[EB_NAME_LEN + 16];
+    snprintf(msg, sizeof(msg), "Tuning in to %s", g_info_item.name);
+    int frame = 0;
+    for (;;) {
+        pthread_mutex_lock(&job->lock);
+        int done = job->done;
+        if (!done && (input_poll() & INP_B)) job->cancelled = 1;
+        int cancelled = job->cancelled;
+        pthread_mutex_unlock(&job->lock);
+        if (cancelled) { input_drain(); return -1; }   /* the thread frees job */
+        if (done) break;
+
+        theme_backdrop(fb);
+        int w = fb->width - 2 * SAFE_X - 40;
+        if (w > 420) w = 420;
+        int h = 64, x = (fb->width - w) / 2, y = (fb->height - h) / 2;
+        theme_dialog(fb, x, y, w, h, "Live TV");
+        truncate_to_width(fb, msg, 1, w - 24);
+        draw_text(fb, (fb->width - text_width(fb, msg, 1)) / 2, y + 40, msg, 1, COL_ITEM);
+        theme_hint_bar(fb, "A:cancel");
+        draw_spinner_frame(fb, frame++);
+        fb_flip(fb);
+        usleep(SPINNER_BLINK_MS * 1000);
+    }
+
+    int ok = job->ok;
+    if (ok) {
+        snprintf(g_info_item.media_source_id, sizeof(g_info_item.media_source_id), "%s", job->msid);
+        snprintf(g_live_stream_id, sizeof(g_live_stream_id), "%s", job->lsid);
+    }
+    pthread_mutex_destroy(&job->lock);
+    free(job);
+    return ok;
 }
 
 static void play(FBDev *fb, const char *item_id, double offset_secs)
@@ -4486,12 +4577,13 @@ static void play(FBDev *fb, const char *item_id, double offset_secs)
     }
     if (playing_live()) {
         start_ticks = 0;
-        if (!live_open_with_spinner(fb, item_id)) {
+        int opened = live_open_with_spinner(fb, item_id);
+        if (opened <= 0) {
             /* Nothing to play: no player is started, so the playback loop
-             * sees it as already ended and returns to the channel list,
-             * where the banner says why. */
-            eb_log_line("play: live stream did not open");
-            banner_enqueue("Couldn't tune in to that channel - try another");
+             * sees it as already ended and returns to the channel list —
+             * with a banner saying why, unless the user cancelled. */
+            eb_log_line(opened < 0 ? "play: tuning cancelled" : "play: live stream did not open");
+            if (opened == 0) banner_enqueue("Couldn't tune in to that channel - try another");
             return;
         }
     }
@@ -6349,6 +6441,10 @@ int main(int argc, char **argv)
                         push_frame(FRAME_COLLECTIONS, "Collections", NULL, NULL, NULL, NULL);
                     else if (view_is_livetv(it))
                         push_frame(FRAME_LIVETV, "Live TV", NULL, NULL, NULL, NULL);
+                    else if (it->synthetic == EB_SYNTH_LIVE_PLAYLIST)
+                        push_frame(FRAME_LIVE_CHANNELS, it->name, NULL, it->id, NULL, NULL);
+                    else if (it->synthetic == EB_SYNTH_LIVE_TAG)
+                        push_frame(FRAME_LIVE_CHANNELS, it->name, it->id, NULL, NULL, NULL);
                     else if (view_is_recordings(it))
                         push_frame(FRAME_RECORDINGS, "Recordings", NULL, NULL, NULL, NULL);
                     else

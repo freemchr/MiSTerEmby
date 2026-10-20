@@ -301,7 +301,7 @@ static void grid_cache_populate(GridLibCache *gc, const EbItem *view,
          * ever a couple of items, so re-fetching is cheap. */
         n = view_is_resume(view)      ? eb_list_resume(s_cfg, grid_items, GRID_FETCH_MAX, NULL)
           : view_is_collections(view) ? eb_list_collections(s_cfg, grid_items, GRID_FETCH_MAX, NULL)
-          : view_is_livetv(view)      ? eb_list_channels(s_cfg, 0, grid_items, GRID_FETCH_MAX, NULL)
+          : view_is_livetv(view)      ? eb_list_channels(s_cfg, NULL, 0, grid_items, GRID_FETCH_MAX, NULL)
           : view_is_recordings(view)  ? eb_list_recordings(s_cfg, 0, grid_items, GRID_FETCH_MAX, NULL)
                                       : eb_list_nextup(s_cfg, grid_items, GRID_FETCH_MAX, NULL);
     } else {

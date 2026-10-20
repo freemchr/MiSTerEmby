@@ -473,6 +473,8 @@ int eb_list_random_tracks(const EbConfig *cfg, const char *parent_id, EbItem *ou
 #define EB_SYNTH_COLLECTIONS 3
 #define EB_SYNTH_LIVETV      4
 #define EB_SYNTH_RECORDINGS  5
+#define EB_SYNTH_LIVE_PLAYLIST 6   /* a TV source inside Live TV; id is "start,count" */
+#define EB_SYNTH_LIVE_TAG      7   /* a channel category inside Live TV; id is the tag id */
 
 /* The two home rows are presented as extra cards on the library carousel, but
  * they aren't libraries — no ParentId to list, no collection type, and their
@@ -514,8 +516,26 @@ int eb_list_collections(const EbConfig *cfg, EbItem *out, int max, int64_t *tota
  * now in series_name and the channel number in year (a channel has
  * neither). Recordings are finished ones only, and play like films. Both
  * return -1 when the request fails, 0 on a server without Live TV. */
-int eb_list_channels(const EbConfig *cfg, int start_index, EbItem *out, int max,
-                     int64_t *total_out);
+int eb_list_channels(const EbConfig *cfg, const char *tag_id, int start_index,
+                     EbItem *out, int max, int64_t *total_out);
+
+/* Live TV's categories (the M3U playlists' group-title tags: News, Sports,
+ * Kids...), each listed as a folder whose id goes to eb_list_channels as
+ * tag_id. */
+int eb_list_channel_tags(const EbConfig *cfg, EbItem *out, int max);
+
+/* The server's TV sources (each M3U playlist or tuner), in the order they
+ * were added, as runs of positions in Emby's channel management listing.
+ * Needs an Emby admin; returns -1 otherwise, or on failure. */
+typedef struct {
+    char name[EB_NAME_LEN];
+    int  start, count;
+} EbLivePlaylist;
+int eb_live_playlists(const EbConfig *cfg, EbLivePlaylist *out, int max);
+/* One playlist's channels, paged like any list: start_index is relative to
+ * the playlist. */
+int eb_list_playlist_channels(const EbConfig *cfg, int first, int count, int start_index,
+                              EbItem *out, int max, int64_t *total_out);
 int eb_list_recordings(const EbConfig *cfg, int start_index, EbItem *out, int max,
                        int64_t *total_out);
 

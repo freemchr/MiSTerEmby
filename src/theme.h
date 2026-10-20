@@ -46,6 +46,11 @@ int theme_brand_logo(FBDev *fb, int cx, int y, int h);
  * Returns its width. */
 int theme_brand_wordmark(FBDev *fb, int x, int y, int h);
 
+/* The screen title in the logo's lettering when there is artwork for it
+ * ("Movies", "TV Shows", "Live TV", "Trailers"), h rows tall, left edge at
+ * x. Returns its width, or 0 (and draws nothing) when there isn't. */
+int theme_section_title(FBDev *fb, const char *title, int x, int y, int h);
+
 /* Rounded rectangle fill. radius is in screen rows; the horizontal radius
  * is widened by the panel's pixel aspect so corners read round, not oval. */
 void theme_round_rect(FBDev *fb, int x, int y, int w, int h, int radius,

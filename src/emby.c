@@ -1859,20 +1859,122 @@ static void build_playstate_json(const char *item_id, const char *play_session_i
                                   int64_t position_ticks, int is_paused,
                                   char *out, int outlen);
 
-int eb_list_channels(const EbConfig *cfg, int start_index, EbItem *out, int max,
-                     int64_t *total_out)
+int eb_list_channels(const EbConfig *cfg, const char *tag_id, int start_index,
+                     EbItem *out, int max, int64_t *total_out)
 {
-    char path[384];
+    /* SortBy=SortName: Emby's default channel order isn't stable between
+     * requests on an IPTV server (seen as one channel turning up on two
+     * pages and another on none), so paging needs an explicit one. */
+    char tag[EB_ID_LEN + 10] = "";
+    if (tag_id && tag_id[0]) {
+        char safe[EB_ID_LEN];
+        eb_sanitize_id(tag_id, safe, sizeof(safe));
+        snprintf(tag, sizeof(tag), "&TagIds=%s", safe);
+    }
+    char path[448];
     snprintf(path, sizeof(path),
-        "/LiveTv/Channels?UserId=%s&StartIndex=%d&Limit=%d&AddCurrentProgram=true"
+        "/LiveTv/Channels?UserId=%s%s&StartIndex=%d&Limit=%d&AddCurrentProgram=true"
+        "&SortBy=SortName&SortOrder=Ascending"
         "&Fields=Overview&EnableUserData=false&ImageTypeLimit=1&EnableImageTypes=Primary"
         "&EnableTotalRecordCount=true",
-        cfg->user_id, start_index, max);
+        cfg->user_id, tag, start_index, max);
 
     EbResponse r;
     if (!eb_fetch(cfg, path, &r)) return -1;
     int n = parse_item_list(&r.doc, out, max);
     parse_total_count(&r.doc, total_out);
+    for (int i = 0; i < n; i++) out[i].type = EB_TYPE_CHANNEL;
+    eb_response_free(&r);
+    return n;
+}
+
+int eb_list_channel_tags(const EbConfig *cfg, EbItem *out, int max)
+{
+    char path[160];
+    snprintf(path, sizeof(path), "/LiveTv/ChannelTags?UserId=%s&Limit=%d", cfg->user_id, max);
+    EbResponse r;
+    if (!eb_fetch(cfg, path, &r)) return -1;
+    int n = parse_item_list(&r.doc, out, max);
+    for (int i = 0; i < n; i++) out[i].type = EB_TYPE_FOLDER;
+    eb_response_free(&r);
+    return n;
+}
+
+/* One row of Emby's channel management listing: which tuner (playlist) the
+ * channel at that position came from. Admin-only; returns 0 when the
+ * request fails, which is also what a non-admin user gets. */
+static int manage_tuner_at(const EbConfig *cfg, int index, char *name, int name_len)
+{
+    char path[96];
+    snprintf(path, sizeof(path), "/LiveTv/Manage/Channels?StartIndex=%d&Limit=1", index);
+    EbResponse r;
+    if (!eb_fetch(cfg, path, &r)) return 0;
+    const JsonNode *items = json_find(&r.doc, json_root(&r.doc), "Items");
+    int ok = 0;
+    JSON_FOREACH(&r.doc, items, it) {
+        copy_display_str(&r.doc, it, "TunerName", name, name_len);
+        ok = 1;
+        break;
+    }
+    eb_response_free(&r);
+    return ok;
+}
+
+int eb_live_playlists(const EbConfig *cfg, EbLivePlaylist *out, int max)
+{
+    /* The management listing keeps each tuner's channels together, in the
+     * order the tuners were added, so a playlist is one run of positions.
+     * Its end is found by binary search on "same tuner as the run's first
+     * row" — about 14 one-row requests per playlist on an 11,000-channel
+     * server, instead of reading every row. */
+    char path[96];
+    snprintf(path, sizeof(path), "/LiveTv/Manage/Channels?StartIndex=0&Limit=1");
+    EbResponse r;
+    if (!eb_fetch(cfg, path, &r)) return -1;
+    int64_t total = 0;
+    parse_total_count(&r.doc, &total);
+    eb_response_free(&r);
+    if (total <= 0) return -1;
+
+    int n = 0;
+    int start = 0;
+    while (start < total && n < max) {
+        char first[EB_NAME_LEN] = "";
+        if (!manage_tuner_at(cfg, start, first, sizeof(first))) return n ? n : -1;
+        int lo = start, hi = (int)total - 1;   /* last index known/assumed in this run */
+        char probe[EB_NAME_LEN];
+        /* Is the last row still this tuner? Then the run is the rest. */
+        if (!manage_tuner_at(cfg, hi, probe, sizeof(probe))) return n ? n : -1;
+        if (strcmp(probe, first) != 0) {
+            while (lo + 1 < hi) {              /* invariant: lo in run, hi not */
+                int mid = lo + (hi - lo) / 2;
+                if (!manage_tuner_at(cfg, mid, probe, sizeof(probe))) return n ? n : -1;
+                if (!strcmp(probe, first)) lo = mid; else hi = mid;
+            }
+        } else {
+            lo = hi;
+        }
+        snprintf(out[n].name, sizeof(out[n].name), "%s", first[0] ? first : "Channels");
+        out[n].start = start;
+        out[n].count = lo - start + 1;
+        n++;
+        start = lo + 1;
+    }
+    return n;
+}
+
+int eb_list_playlist_channels(const EbConfig *cfg, int first, int count, int start_index,
+                              EbItem *out, int max, int64_t *total_out)
+{
+    if (total_out) *total_out = count;
+    if (start_index >= count) return 0;
+    if (max > count - start_index) max = count - start_index;
+    char path[128];
+    snprintf(path, sizeof(path), "/LiveTv/Manage/Channels?StartIndex=%d&Limit=%d",
+             first + start_index, max);
+    EbResponse r;
+    if (!eb_fetch(cfg, path, &r)) return -1;
+    int n = parse_item_list(&r.doc, out, max);
     for (int i = 0; i < n; i++) out[i].type = EB_TYPE_CHANNEL;
     eb_response_free(&r);
     return n;

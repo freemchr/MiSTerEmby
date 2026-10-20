@@ -2,6 +2,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <math.h>
 #include <time.h>
 
@@ -271,6 +272,24 @@ int theme_brand_logo(FBDev *fb, int cx, int y, int h)
 int theme_brand_wordmark(FBDev *fb, int x, int y, int h)
 {
     return brand_draw(fb, &brand_word, x, y, h);
+}
+
+/* Section titles drawn in the logo's lettering, keyed by the screen title
+ * they replace (a library's name as Emby gives it, or the app's own Live TV
+ * tile). */
+static struct { const char *title; BrandImage img; } section_titles[] = {
+    { "Movies",   { title_movies_png,   (int)sizeof(title_movies_png),   NULL, 0, 0, NULL, 0, 0 } },
+    { "TV Shows", { title_tvshows_png,  (int)sizeof(title_tvshows_png),  NULL, 0, 0, NULL, 0, 0 } },
+    { "Live TV",  { title_livetv_png,   (int)sizeof(title_livetv_png),   NULL, 0, 0, NULL, 0, 0 } },
+    { "Trailers", { title_trailers_png, (int)sizeof(title_trailers_png), NULL, 0, 0, NULL, 0, 0 } },
+};
+
+int theme_section_title(FBDev *fb, const char *title, int x, int y, int h)
+{
+    for (size_t i = 0; i < sizeof(section_titles) / sizeof(section_titles[0]); i++)
+        if (!strcasecmp(title, section_titles[i].title))
+            return brand_draw(fb, &section_titles[i].img, x, y, h);
+    return 0;
 }
 
 /* The logo's monitor on its own: what the top bar and dialog headers show,

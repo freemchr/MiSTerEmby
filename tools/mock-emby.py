@@ -26,6 +26,7 @@ or  nothing else, and run the client with
 
 import json
 import re
+import time
 import struct
 import sys
 import zlib
@@ -285,6 +286,11 @@ CHANNELS = [
         (9, "Mock Nine", "Late Movie"), (10, "Mock Ten", "Weather"),
     ])
 ]
+CHANNEL_TAGS = [("tag-news", "News"), ("tag-kids", "Kids")]
+for _i, _c in enumerate(CHANNELS):
+    _c["TagItems"] = [{"Id": "tag-news" if _i % 2 == 0 else "tag-kids",
+                       "Name": "News" if _i % 2 == 0 else "Kids"}]
+
 RECORDINGS = [
     base_item("rec-0", "Recorded Film", "Movie", RunTimeTicks=90 * TICKS_PER_MIN),
     base_item("rec-1", "Pilot", "Episode", SeriesName="Recorded Show", IndexNumber=1,
@@ -486,8 +492,24 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/Users/" + USER_ID:
             return self._send({"Id": USER_ID, "Name": USER_NAME})
 
+        if path == "/LiveTv/ChannelTags":
+            return self._send({"Items": [base_item(t, n, "Tag") for t, n in CHANNEL_TAGS],
+                               "TotalRecordCount": len(CHANNEL_TAGS)})
+        if path == "/LiveTv/Manage/Channels":
+            # Admin channel management: each channel with the TV source it
+            # came from, sources in the order they were added.
+            start = int(query.get("StartIndex", ["0"])[0])
+            limit = int(query.get("Limit", ["100"])[0])
+            rows = [dict(c, Type="ChannelManagementInfo",
+                         TunerName="Mock Local" if i < 2 else "Mock World")
+                    for i, c in enumerate(CHANNELS)]
+            return self._send({"Items": rows[start:start + limit],
+                               "TotalRecordCount": len(rows)})
         if path in ("/LiveTv/Channels", "/LiveTv/Recordings"):
             rows = CHANNELS if path.endswith("Channels") else RECORDINGS
+            tag = query.get("TagIds", [None])[0]
+            if tag:
+                rows = [c for c in rows if tag in [t["Id"] for t in c.get("TagItems", [])]]
             start = int(query.get("StartIndex", ["0"])[0])
             limit = int(query.get("Limit", ["100"])[0])
             return self._send({"Items": rows[start:start + limit],
@@ -634,6 +656,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_401()
         m = re.match(r"^/Items/(channel-\d+)/PlaybackInfo$", path)
         if m:
+            if m.group(1) == "channel-2":
+                time.sleep(6)   # a slow-to-tune channel, like an internet stream
+            
             return self._send({"MediaSources": [{"Id": "ms-" + m.group(1),
                                                  "LiveStreamId": "live-" + m.group(1)}],
                                "PlaySessionId": "mock"})
