@@ -49,3 +49,22 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: misteremby-${{ github.ref_name }}.zip
+
+      # MiSTer Downloader / update_all read db.json from the db branch (see
+      # downloader_misteremby.ini). Each release's files go under their own
+      # files/<tag>/ folder there, so the URLs in an older db.json keep working.
+      - name: Check out the Downloader database
+        uses: actions/checkout@v4
+        with:
+          ref: db
+          path: dbtree
+
+      - name: Update the Downloader database
+        run: |
+          python3 tools/make-downloader-db.py release ${{ github.ref_name }} dbtree
+          cd dbtree
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Downloader database for ${{ github.ref_name }}"
+          git push origin db

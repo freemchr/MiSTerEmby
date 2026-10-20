@@ -12,6 +12,7 @@ MiSTerEmby is by **Chris Freeman ([freemchr](https://github.com/freemchr))**. It
 - [Features](#features)
 - [Requirements](#requirements)
 - [Installation](#installation)
+  - [Installing and updating with MiSTer Downloader](#installing-and-updating-with-mister-downloader)
 - [Configuring `emby.conf`](#configuring)
   - [Signing in](#signing-in)
 - [Controls](#controls)
@@ -82,6 +83,16 @@ These are on the `main` branch but not in the v1.0.0 download yet, and haven't b
 3. Launch **MiSTerEmby** from the MiSTer **Scripts** menu.
 
 `make deploy` does steps 1 and 2 over SSH, except for `emby.conf`.
+
+### Installing and updating with MiSTer Downloader
+
+MiSTerEmby has its own database for MiSTer Downloader and update_all, so it can be installed and kept up to date with the rest of your MiSTer:
+
+1. Copy [`downloader_misteremby.ini`](downloader_misteremby.ini) to `/media/fat/` on the SD card.
+2. Run **downloader** or **update_all** from the Scripts menu. It installs `/media/fat/misteremby/` and `Scripts/MiSTerEmby.sh`.
+3. Create `emby.conf` as described below. The database never installs or overwrites `emby.conf` or your saved sign-in.
+
+If you use the database, update through the Downloader rather than the About screen's updater. Both write the same files, so the next Downloader run would put back the version the database lists.
 
 ## <a id="configuring"></a>Configuring `emby.conf`
 
