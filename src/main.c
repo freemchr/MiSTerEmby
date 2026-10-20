@@ -654,6 +654,73 @@ static void home_row_label_episodes(void)
     }
 }
 
+/* ── recently watched channels ─────────────────────────────────────────────
+ * Continue Watching leads with the last few channels watched. Emby does
+ * stamp a channel's play date, but its channel listing can't tell watched
+ * from never-watched, so the app keeps its own short list on the SD card:
+ * one "id<TAB>image_tag<TAB>name" line per channel, newest first. */
+#define RECENT_CHANNELS_FILE "/media/fat/misteremby/recent_channels.txt"
+#define RECENT_CHANNELS_MAX  3
+
+static const char *recent_channels_path(void)
+{
+    /* Beside the caches on a desktop run (see util.h), where there's no
+     * /media/fat. */
+    static char p[256];
+    if (!p[0]) {
+        const char *root = getenv("MISTEREMBY_CACHE_ROOT");
+        if (root && root[0]) snprintf(p, sizeof(p), "%s/recent_channels.txt", root);
+        else                 snprintf(p, sizeof(p), "%s", RECENT_CHANNELS_FILE);
+    }
+    return p;
+}
+
+static int recent_channels_load(EbItem *out, int max)
+{
+    FILE *f = fopen(recent_channels_path(), "r");
+    if (!f) return 0;
+    int n = 0;
+    char line[512];
+    while (n < max && fgets(line, sizeof(line), f)) {
+        line[strcspn(line, "\r\n")] = '\0';
+        char *t1 = strchr(line, '\t');
+        char *t2 = t1 ? strchr(t1 + 1, '\t') : NULL;
+        if (!t1 || !t2 || t1 == line) continue;
+        *t1 = *t2 = '\0';
+        EbItem *it = &out[n];
+        memset(it, 0, sizeof(*it));
+        snprintf(it->id, sizeof(it->id), "%s", line);
+        snprintf(it->image_tag, sizeof(it->image_tag), "%s", t1 + 1);
+        snprintf(it->image_item_id, sizeof(it->image_item_id), "%s", line);
+        snprintf(it->name, sizeof(it->name), "%s", t2 + 1);
+        it->type = EB_TYPE_CHANNEL;
+        it->index_number = it->parent_index_number = -1;
+        n++;
+    }
+    fclose(f);
+    return n;
+}
+
+static void recent_channels_add(const EbItem *ch)
+{
+    EbItem list[RECENT_CHANNELS_MAX];
+    int n = recent_channels_load(list, RECENT_CHANNELS_MAX);
+    FILE *f = fopen(recent_channels_path(), "w");
+    if (!f) return;
+    /* Tabs and newlines can't come back from the server inside these, but
+     * a name is display text: keep the file line-shaped regardless. */
+    char name[EB_NAME_LEN];
+    snprintf(name, sizeof(name), "%s", ch->name);
+    for (char *c = name; *c; c++) if (*c == '\t' || *c == '\n' || *c == '\r') *c = ' ';
+    fprintf(f, "%s\t%s\t%s\n", ch->id, ch->image_tag, name);
+    for (int i = 0, kept = 1; i < n && kept < RECENT_CHANNELS_MAX; i++) {
+        if (!strcmp(list[i].id, ch->id)) continue;
+        fprintf(f, "%s\t%s\t%s\n", list[i].id, list[i].image_tag, list[i].name);
+        kept++;
+    }
+    fclose(f);
+}
+
 /* Live TV's own menu: one entry per TV source (M3U playlist) when the
  * signed-in user can see them, then every channel category, then all
  * channels — 11,000 channels in one list is no way to find anything. The
@@ -749,13 +816,17 @@ static int fetch_frame_window(int start_index)
         for (int s = 0; s < 5; s++) {
             EbItem probe[1];
             int64_t total = 0;
+            EbItem recent[RECENT_CHANNELS_MAX];
+            int nrecent = (s == 0) ? recent_channels_load(recent, RECENT_CHANNELS_MAX) : 0;
             int got = (s == 0) ? eb_list_resume(&g_cfg, probe, 1, &total)
                     : (s == 1) ? eb_list_nextup(&g_cfg, probe, 1, &total)
                     : (s == 2) ? eb_list_collections(&g_cfg, probe, 1, &total)
                     : (s == 3) ? eb_list_channels(&g_cfg, NULL, 0, probe, 1, &total)
                                : eb_list_recordings(&g_cfg, 0, probe, 1, &total);
-            if (got <= 0) continue;
+            if (got < 0) got = 0;
             if (total <= 0) total = got;
+            total += nrecent;
+            if (got + nrecent <= 0) continue;
 
             EbItem *card = &g_items[n_synth];
             memset(card, 0, sizeof(*card));
@@ -777,11 +848,15 @@ static int fetch_frame_window(int start_index)
         g_item_count = n_synth + n_views;
         break;
     }
-    case FRAME_RESUME:
+    case FRAME_RESUME: {
         g_window_start = 0;
-        g_item_count = eb_list_resume(&g_cfg, g_items, HOME_ROW_MAX, &g_total_count);
+        int nch = recent_channels_load(g_items, RECENT_CHANNELS_MAX);
+        int got = eb_list_resume(&g_cfg, g_items + nch, HOME_ROW_MAX - nch, &g_total_count);
+        if (got < 0 && nch == 0) { g_item_count = -1; break; }
+        g_item_count = nch + (got > 0 ? got : 0);
         home_row_label_episodes();
         break;
+    }
     case FRAME_NEXTUP:
         g_window_start = 0;
         g_item_count = eb_list_nextup(&g_cfg, g_items, HOME_ROW_MAX, &g_total_count);
@@ -2078,24 +2153,58 @@ static double carousel_ease(double t)
  * an install has started, the same line reports how it's going. Drawn by
  * BOTH the settled carousel frame and every slide-animation frame, so it
  * doesn't blink off during a slide. */
+/* A white up-arrow, h rows tall, for the update badge. */
+static void draw_update_arrow(FBDev *fb, int x, int y, int h)
+{
+    double par = par_correction(fb);
+    int head = h / 2;
+    for (int r = 0; r < head; r++) {           /* the arrowhead */
+        int half = (int)((r + 1) * par * 0.9 + 0.5);
+        fb_fill_rect_alpha(fb, x - half, y + r, half * 2 + 1, 1, 0xFF, 0xFF, 0xFF, 255);
+    }
+    int sw = (int)(2 * par + 0.5);               /* the shaft */
+    fb_fill_rect_alpha(fb, x - sw / 2, y + head, sw + 1, h - head, 0xFF, 0xFF, 0xFF, 255);
+}
+
 static void draw_carousel_update_notice(FBDev *fb)
 {
     UpdateState  us;
     InstallState is;
     char latest[32] = "";
     update_get_state(&us, &is, latest, sizeof(latest));
-    int y = SAFE_Y + 27;
-    if (is == INST_DOWNLOADING) {
-        draw_text(fb, SAFE_X, y, "Downloading update", 1, THEME_GREEN);
-        theme_dots(fb, SAFE_X + text_width(fb, "Downloading update", 1) + 24, y + 1);
-    } else if (is == INST_DONE) {
-        draw_text(fb, SAFE_X, y, "Update installed - restart MiSTerEmby to apply", 1, THEME_GREEN);
-    } else if (is == INST_FAILED) {
-        draw_text(fb, SAFE_X, y, "Update download failed", 1, COL_ERR);
-    } else if (us == UPD_AVAILABLE) {
-        char msg[64];
-        snprintf(msg, sizeof(msg), "START:update to %s available", latest[0] ? latest : "a new version");
-        theme_hints_at(fb, SAFE_X, y, msg, 0);
+
+    char msg[64];
+    int  arrow = 0, start_chip = 0, dots = 0;
+    uint8_t r = 0x52, g = 0xB5, b = 0x4B;       /* Emby green */
+    if (is == INST_DOWNLOADING)      { snprintf(msg, sizeof(msg), "Downloading"); dots = 1; }
+    else if (is == INST_DONE)        snprintf(msg, sizeof(msg), "Restart to finish updating");
+    else if (is == INST_FAILED)      { snprintf(msg, sizeof(msg), "Update failed"); r = 0xC0; g = 0x3A; b = 0x3A; }
+    else if (us == UPD_AVAILABLE)    { snprintf(msg, sizeof(msg), "%s", latest[0] ? latest : "Update");
+                                       arrow = 1; start_chip = 1; }
+    else return;
+
+    /* A green badge at the right of the top bar, beside the clock, the way
+     * Emby marks something waiting for you: an arrow, the new version, and
+     * the START button that opens it. */
+    double par = par_correction(fb);
+    int h = 14;
+    int arrow_w = arrow ? (int)(8 * par + 0.5) + 6 : 0;
+    const char *chip = "START";
+    int chip_w = start_chip ? text_width(fb, chip, 1) + 10 : 0;
+    int dots_w = dots ? 30 : 0;
+    int w = 12 + arrow_w + text_width(fb, msg, 1) + dots_w + (chip_w ? chip_w + 6 : 0) + 8;
+    int right = draw_clock(fb) - 10;
+    int x = right - w, y = SAFE_Y - 1;
+    theme_pill(fb, x, y, w, h, r, g, b, 255);
+    int cx = x + 10;
+    if (arrow) { draw_update_arrow(fb, cx + arrow_w / 2 - 3, y + 3, h - 6); cx += arrow_w; }
+    draw_text(fb, cx, y + 3, msg, 1, 0xFF, 0xFF, 0xFF);
+    cx += text_width(fb, msg, 1);
+    if (dots) theme_dots(fb, cx + 16, y + 4);
+    if (chip_w) {
+        int chx = x + w - 6 - chip_w;
+        theme_pill(fb, chx, y + 2, chip_w, h - 4, 0x24, 0x6E, 0x21, 255);
+        draw_text(fb, chx + 5, y + 3, chip, 1, 0xFF, 0xFF, 0xFF);
     }
 }
 
@@ -2685,7 +2794,7 @@ static void draw_browse(FBDev *fb)
     /* A channel list carries each channel's logo at the left of its row. */
     int chan_logo_h = ROW_H - 8;
     int chan_logo_w = (int)(chan_logo_h * 16.0 / 9.0 * par_correction(fb) + 0.5);
-    int chan_rows = g_item_count > 0 && g_items[0].type == EB_TYPE_CHANNEL;
+    /* (Continue Watching mixes them with films and episodes.) */
     g_poster_decodes_left = POSTER_DECODES_PER_DRAW;
 
     for (int i = g_scroll; i < end; i++) {
@@ -2694,7 +2803,7 @@ static void draw_browse(FBDev *fb)
         int is_sel = (i == g_sel);
         EbItem *it = &g_items[i];
         int text_x = SAFE_X;
-        if (chan_rows) {
+        if (it->type == EB_TYPE_CHANNEL) {
             int lx = SAFE_X, ly = y - 2;
             PosterSlot *ps = poster_get_fit(fb, it, chan_logo_w, chan_logo_h);
             if (ps) fb_blit_opaque(fb, ps->px, chan_logo_w, chan_logo_h, lx, ly, chan_logo_w, chan_logo_h);
@@ -2756,6 +2865,9 @@ static void draw_browse(FBDev *fb)
         } else if (it->type == EB_TYPE_CHANNEL) {
             if (it->series_name[0]) {
                 snprintf(line2, sizeof(line2), "Now: %s", it->series_name);
+                l2r = 0x8E; l2g = 0xD8; l2b = 0x86;
+            } else if (f->kind == FRAME_RESUME) {
+                snprintf(line2, sizeof(line2), "Live TV");
                 l2r = 0x8E; l2g = 0xD8; l2b = 0x86;
             }
         } else if (it->type == EB_TYPE_MOVIE || it->type == EB_TYPE_MUSIC_VIDEO ||
@@ -4637,6 +4749,7 @@ static void play(FBDev *fb, const char *item_id, double offset_secs)
             if (opened == 0) banner_enqueue("Couldn't tune in to that channel - try another");
             return;
         }
+        recent_channels_add(&g_info_item);   /* for Continue Watching */
     }
 
     char url[1024];
