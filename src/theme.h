@@ -35,9 +35,12 @@ void theme_fill_bg(FBDev *fb);
  * caller draws the logo/title/clock on top (see main.c's draw_top_bar). */
 void theme_header(FBDev *fb, int safe_y);
 
-/* MiSTerEmby's mark: a green rounded diamond with a white play triangle,
- * h pixels tall, top-left at (x, y). Returns its drawn width. */
+/* The MiSTerEmby icon (the logo's monitor), h rows tall with its left edge
+ * at x — for the top bar and dialog headers. Returns its width. */
 int theme_logo(FBDev *fb, int x, int y, int h);
+
+/* The full MiSTerEmby logo, h rows tall, centred on cx. Returns its width. */
+int theme_brand_logo(FBDev *fb, int cx, int y, int h);
 
 /* Rounded rectangle fill. radius is in screen rows; the horizontal radius
  * is widened by the panel's pixel aspect so corners read round, not oval. */

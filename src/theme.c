@@ -7,6 +7,8 @@
 
 #include "theme.h"
 #include "draw.h"
+#include "stb_image.h"   /* declarations only — the implementation is compiled in main.c */
+#include "logo_png.h"
 
 static double theme_now(void)
 {
@@ -189,37 +191,88 @@ void theme_header(FBDev *fb, int safe_y)
     hspan(fb, 0, fb->width, h, THEME_LINE, 255);
 }
 
+/* ── the MiSTerEmby logo and icon ──────────────────────────────────────────
+ * Both built into the binary (src/logo_png.h, from assets/), decoded on
+ * first use and box-filtered down to the exact size they're drawn at — a
+ * plain nearest-neighbour shrink of artwork this detailed shimmers on a CRT.
+ * The scaled copy is kept, so redrawing is one blit. */
+typedef struct {
+    const unsigned char *png;
+    int      png_len;
+    uint8_t *src;  int sw, sh;     /* decoded original */
+    uint8_t *px;   int w, h;       /* scaled to the last size drawn */
+} BrandImage;
+
+static BrandImage brand_logo = { logo_png, (int)sizeof(logo_png), NULL, 0, 0, NULL, 0, 0 };
+static BrandImage brand_icon = { icon_png, (int)sizeof(icon_png), NULL, 0, 0, NULL, 0, 0 };
+
+/* Area-average RGBA downscale, weighting colour by alpha so the transparent
+ * edge doesn't bleed dark fringes into the outline. */
+static uint8_t *brand_box_scale(const uint8_t *src, int sw, int sh, int dw, int dh)
+{
+    uint8_t *out = malloc((size_t)dw * dh * 4);
+    if (!out) return NULL;
+    for (int y = 0; y < dh; y++) {
+        int y0 = y * sh / dh, y1 = (y + 1) * sh / dh;
+        if (y1 <= y0) y1 = y0 + 1;
+        for (int x = 0; x < dw; x++) {
+            int x0 = x * sw / dw, x1 = (x + 1) * sw / dw;
+            if (x1 <= x0) x1 = x0 + 1;
+            uint32_t r = 0, g = 0, b = 0, a = 0, n = 0;
+            for (int yy = y0; yy < y1 && yy < sh; yy++) {
+                const uint8_t *p = src + ((size_t)yy * sw + x0) * 4;
+                for (int xx = x0; xx < x1 && xx < sw; xx++, p += 4) {
+                    r += p[0] * p[3]; g += p[1] * p[3]; b += p[2] * p[3];
+                    a += p[3]; n++;
+                }
+            }
+            uint8_t *o = out + ((size_t)y * dw + x) * 4;
+            if (a) { o[0] = r / a; o[1] = g / a; o[2] = b / a; }
+            else   { o[0] = o[1] = o[2] = 0; }
+            o[3] = n ? a / n : 0;
+        }
+    }
+    return out;
+}
+
+/* Draws img h rows tall with its left edge at x. Returns the drawn width,
+ * or 0 if it couldn't be decoded. */
+static int brand_decode(BrandImage *img)
+{
+    if (!img->src) {
+        int comp;
+        img->src = stbi_load_from_memory(img->png, img->png_len, &img->sw, &img->sh, &comp, 4);
+    }
+    return img->src != NULL;
+}
+
+static int brand_draw(FBDev *fb, BrandImage *img, int x, int y, int h)
+{
+    if (!brand_decode(img)) return 0;
+    int w = (int)((double)img->sw / img->sh * h * par_correction(fb) + 0.5);
+    if (!img->px || img->w != w || img->h != h) {
+        free(img->px);
+        img->px = brand_box_scale(img->src, img->sw, img->sh, w, h);
+        if (!img->px) return 0;
+        img->w = w; img->h = h;
+    }
+    fb_blit(fb, img->px, w, h, x, y, w, h, 255);
+    return w;
+}
+
+int theme_brand_logo(FBDev *fb, int cx, int y, int h)
+{
+    if (!brand_decode(&brand_logo)) return 0;
+    int w = (int)((double)brand_logo.sw / brand_logo.sh * h * par_correction(fb) + 0.5);
+    return brand_draw(fb, &brand_logo, cx - w / 2, y, h);
+}
+
+/* The logo's monitor on its own: what the top bar and dialog headers show,
+ * where the full logo's lettering would be too small to read. */
 int theme_logo(FBDev *fb, int x, int y, int h)
 {
     if (h < 6) h = 6;
-    double par = par_correction(fb);
-    int half = h / 2;
-    int w = (int)(h * par + 0.5);
-    double cx = x + w / 2.0;
-    /* Rounded diamond: the half-width at a row shrinks linearly away from
-     * the middle row, with the four points clipped flat so it reads as a
-     * softened tile rather than a sharp rhombus. */
-    double clip = 0.18;
-    for (int row = 0; row < h; row++) {
-        double v = fabs((row + 0.5) - h / 2.0) / (h / 2.0);   /* 0 middle .. 1 tip */
-        if (v > 1 - clip * 0.6) v = 1 - clip * 0.6;
-        double hw = (1 - v) * (w / 2.0);
-        if (hw > (w / 2.0) * (1 - clip)) hw = (w / 2.0) * (1 - clip);
-        hspan(fb, (int)(cx - hw + 0.5), (int)(cx + hw + 0.5), y + row, THEME_GREEN, 255);
-    }
-    /* White play triangle, pointing right, centered a hair right of middle
-     * (optical centre of a triangle). */
-    int th = h * 9 / 20;
-    if (th < 3) th = 3;
-    int ty0 = y + half - th / 2;
-    double tw = th * 0.85 * par;
-    double tx0 = cx - tw * 0.40;
-    for (int row = 0; row < th; row++) {
-        double v = fabs((row + 0.5) - th / 2.0) / (th / 2.0);
-        double len = tw * (1 - v);
-        hspan(fb, (int)(tx0 + 0.5), (int)(tx0 + len + 0.5), ty0 + row, 0xFF, 0xFF, 0xFF, 255);
-    }
-    return w;
+    return brand_draw(fb, &brand_icon, x, y, h);
 }
 
 void theme_dialog(FBDev *fb, int x, int y, int w, int h, const char *title)

@@ -30,7 +30,6 @@
 #endif
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
-#include "logo_png.h"
 #include "ddr.h"
 #include "emby.h"
 #include "json.h"
@@ -960,72 +959,12 @@ static void refetch_frame_keep_selection(FBDev *fb)
 }
 
 
-/* ── the MiSTerEmby logo ───────────────────────────────────────────────────
- * Built into the binary (src/logo_png.h, from assets/logo.png), decoded on
- * first use and box-filtered down to the exact size it's drawn at — a plain
- * nearest-neighbour shrink of artwork this detailed shimmers on a CRT. The
- * scaled copy is kept, so redrawing it is one blit. */
-static uint8_t *g_brand_src = NULL;
-static int      g_brand_sw = 0, g_brand_sh = 0;
-static uint8_t *g_brand_px = NULL;
-static int      g_brand_w = 0, g_brand_h = 0;
-
-/* Area-average RGBA downscale, weighting colour by alpha so the transparent
- * edge doesn't bleed dark fringes into the outline. */
-static uint8_t *brand_box_scale(const uint8_t *src, int sw, int sh, int dw, int dh)
-{
-    uint8_t *out = malloc((size_t)dw * dh * 4);
-    if (!out) return NULL;
-    for (int y = 0; y < dh; y++) {
-        int y0 = y * sh / dh, y1 = (y + 1) * sh / dh;
-        if (y1 <= y0) y1 = y0 + 1;
-        for (int x = 0; x < dw; x++) {
-            int x0 = x * sw / dw, x1 = (x + 1) * sw / dw;
-            if (x1 <= x0) x1 = x0 + 1;
-            uint32_t r = 0, g = 0, b = 0, a = 0, n = 0;
-            for (int yy = y0; yy < y1 && yy < sh; yy++) {
-                const uint8_t *p = src + ((size_t)yy * sw + x0) * 4;
-                for (int xx = x0; xx < x1 && xx < sw; xx++, p += 4) {
-                    r += p[0] * p[3]; g += p[1] * p[3]; b += p[2] * p[3];
-                    a += p[3]; n++;
-                }
-            }
-            uint8_t *o = out + ((size_t)y * dw + x) * 4;
-            if (a) { o[0] = r / a; o[1] = g / a; o[2] = b / a; }
-            else   { o[0] = o[1] = o[2] = 0; }
-            o[3] = n ? a / n : 0;
-        }
-    }
-    return out;
-}
-
-/* Draws the logo h rows tall, centred on cx. Returns its drawn width, or 0
- * if it couldn't be decoded. */
-static int draw_app_logo(FBDev *fb, int cx, int y, int h)
-{
-    if (!g_brand_src) {
-        int comp;
-        g_brand_src = stbi_load_from_memory(logo_png, (int)sizeof(logo_png),
-                                           &g_brand_sw, &g_brand_sh, &comp, 4);
-        if (!g_brand_src) return 0;
-    }
-    int w = (int)((double)g_brand_sw / g_brand_sh * h * par_correction(fb) + 0.5);
-    if (!g_brand_px || g_brand_w != w || g_brand_h != h) {
-        free(g_brand_px);
-        g_brand_px = brand_box_scale(g_brand_src, g_brand_sw, g_brand_sh, w, h);
-        if (!g_brand_px) return 0;
-        g_brand_w = w; g_brand_h = h;
-    }
-    fb_blit(fb, g_brand_px, w, h, cx - w / 2, y, w, h, 255);
-    return w;
-}
-
 /* The startup screen while the server is being reached and signed in to. */
 static void draw_splash(FBDev *fb, int spinner_frame)
 {
     theme_backdrop(fb);
     int h = fb->height * 3 / 5;
-    draw_app_logo(fb, fb->width / 2, (fb->height - h) / 2 - 6, h);
+    theme_brand_logo(fb, fb->width / 2, (fb->height - h) / 2 - 6, h);
     draw_spinner_frame(fb, spinner_frame);
     fb_flip(fb);
 }
@@ -1054,7 +993,7 @@ static void draw_about_frame(FBDev *fb, int show_footer)
     int total_h = logo_h + logo_gap + text_h;
     int cur_y = avail_top + (avail_bottom - avail_top - total_h) / 2;
 
-    draw_app_logo(fb, fb->width / 2, cur_y, logo_h);
+    theme_brand_logo(fb, fb->width / 2, cur_y, logo_h);
     cur_y += logo_h + logo_gap;
 
     draw_text(fb, (fb->width - text_width(fb, line1, s1)) / 2, cur_y, line1, s1, COL_ITEM);
@@ -1898,8 +1837,8 @@ static void draw_top_bar(FBDev *fb, const char *title)
     theme_header(fb, SAFE_Y);
     int clock_x = draw_clock(fb);
 
-    int logo_h = 14;
-    int logo_w = theme_logo(fb, SAFE_X, SAFE_Y + 1, logo_h);
+    int logo_h = 16;   /* the title's own height (2x font) */
+    int logo_w = theme_logo(fb, SAFE_X, SAFE_Y, logo_h);
 
     int title_x0 = SAFE_X + logo_w + 8;
     int title_x1 = clock_x - 12;
