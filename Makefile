@@ -1,4 +1,4 @@
-SRCS = src/main.c src/theme.c src/fb.c src/ddr.c src/grid.c src/visualizers.c src/emby.c src/json.c src/session.c src/subtitles.c src/update.c src/input.c src/util.c src/draw.c src/screenshot.c src/sfx.c
+SRCS = src/main.c src/theme.c src/fb.c src/ddr.c src/grid.c src/visualizers.c src/emby.c src/json.c src/session.c src/subtitles.c src/update.c src/input.c src/util.c src/draw.c src/screenshot.c src/sfx.c src/hls.c
 
 TARGET     = misteremby
 TARGET_ARM = misteremby-arm
@@ -45,6 +45,8 @@ test:
 	$(CC) $(CFLAGS) -o /tmp/misteremby_test_emby_queries \
 		tests/test_emby_queries.c src/emby.c src/json.c
 	@/tmp/misteremby_test_emby_queries
+	$(CC) $(CFLAGS) -o /tmp/misteremby_test_hls tests/test_hls.c src/hls.c src/emby.c src/json.c -lpthread
+	@/tmp/misteremby_test_hls
 	$(CC) $(CFLAGS) -o /tmp/misteremby_test_sfx tests/test_sfx.c -lpthread
 	@/tmp/misteremby_test_sfx
 	$(CC) $(CFLAGS) -o /tmp/misteremby_test_hero tests/test_hero.c src/draw.c

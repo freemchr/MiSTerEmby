@@ -38,6 +38,7 @@
 #include "input.h"
 #include "draw.h"
 #include "screenshot.h"
+#include "hls.h"
 #include "sfx.h"
 #include "util.h"
 #include "grid.h"
@@ -3324,6 +3325,7 @@ static void player_stop(void)
         waitpid(g_player_pid, NULL, 0);
         g_player_pid = -1;
     }
+    hls_stop();   /* a direct live channel's feeder, if any */
     if (g_curl_pid > 0) {
         /* Its own process, not in mplayer's group (see stream_via_curl_if_
          * https) — killed explicitly so a stop/seek-restart never leaves it
@@ -4343,6 +4345,10 @@ static int    g_end_by_user = 0;
  * restart for a new audio track, which opens a fresh one. It never has
  * watch state: no resume, no played mark, nothing to seek in. */
 static char g_live_stream_id[EB_LIVE_ID_LEN] = "";
+/* Direct mode (see hls.h): the channel's own stream, fed to mplayer by the
+ * app, with no live stream opened on the server. */
+static int  g_live_direct = 0;
+static char g_live_direct_url[2048];
 static int playing_live(void) { return g_info_item.type == EB_TYPE_CHANNEL; }
 
 static void report_video_stopped(int64_t position_ticks, int watched)
@@ -4498,6 +4504,8 @@ typedef struct {
     char id[EB_ID_LEN];
     char msid[EB_ID_LEN + 16];
     char lsid[EB_LIVE_ID_LEN];
+    int  direct, dw, dh;            /* direct mode: the variant's size */
+    char direct_url[2048];
     int  ok, done, cancelled;
     pthread_mutex_t lock;
 } LiveOpenJob;
@@ -4505,7 +4513,18 @@ typedef struct {
 static void *live_open_thread(void *arg)
 {
     LiveOpenJob *j = arg;
-    int ok = eb_live_open(&g_cfg, j->id, j->msid, sizeof(j->msid), j->lsid, sizeof(j->lsid));
+    /* Direct when the channel's own stream offers a size the MiSTer can
+     * decode itself; otherwise the server converts it as before. */
+    int ok = 0;
+    char master[2048];
+    if (!g_cfg.live_transcode &&
+        eb_live_stream_url(&g_cfg, j->id, master, sizeof(master)) &&
+        hls_probe(master, j->direct_url, sizeof(j->direct_url), &j->dw, &j->dh)) {
+        j->direct = 1;
+        ok = 1;
+    } else {
+        ok = eb_live_open(&g_cfg, j->id, j->msid, sizeof(j->msid), j->lsid, sizeof(j->lsid));
+    }
     pthread_mutex_lock(&j->lock);
     j->ok = ok;
     j->done = 1;
@@ -4513,7 +4532,7 @@ static void *live_open_thread(void *arg)
     pthread_mutex_unlock(&j->lock);
     if (cancelled) {
         /* Nobody is waiting any more: release it and clean up. */
-        if (ok) eb_live_close(&g_cfg, j->lsid, 1);
+        if (ok && !j->direct) eb_live_close(&g_cfg, j->lsid, 1);
         pthread_mutex_destroy(&j->lock);
         free(j);
     }
@@ -4561,9 +4580,14 @@ static int live_open_with_spinner(FBDev *fb, const char *item_id)
     }
 
     int ok = job->ok;
-    if (ok) {
+    g_live_direct = ok && job->direct;
+    if (g_live_direct) {
+        snprintf(g_live_direct_url, sizeof(g_live_direct_url), "%s", job->direct_url);
+        eb_log_line("play: live direct %dx%d", job->dw, job->dh);
+    } else if (ok) {
         snprintf(g_info_item.media_source_id, sizeof(g_info_item.media_source_id), "%s", job->msid);
         snprintf(g_live_stream_id, sizeof(g_live_stream_id), "%s", job->lsid);
+        eb_log_line("play: live via the server");
     }
     pthread_mutex_destroy(&job->lock);
     free(job);
@@ -4600,6 +4624,8 @@ static void play(FBDev *fb, const char *item_id, double offset_secs)
         eb_live_close(&g_cfg, g_live_stream_id, 0);
         g_live_stream_id[0] = '\0';
     }
+    hls_stop();
+    g_live_direct = 0;
     if (playing_live()) {
         start_ticks = 0;
         int opened = live_open_with_spinner(fb, item_id);
@@ -4619,14 +4645,28 @@ static void play(FBDev *fb, const char *item_id, double offset_secs)
      * rules out the untouched copy. */
     const char *copy_codec = (g_burned_in_sub_index < 0 && !g_cfg.transcode_always && !playing_live())
                                ? eb_direct_stream_codec(&g_info_item) : NULL;
-    eb_stream_url(&g_cfg, item_id, g_info_item.media_source_id, copy_codec, &profile, start_ticks,
-                  g_play_session_id, g_burned_in_sub_index, g_current_audio_index, url, sizeof(url));
-    eb_stream_url_add_live(url, sizeof(url), g_live_stream_id);
-    stream_via_curl_if_https(url, sizeof(url));
+    if (g_live_direct) {
+        /* The app feeds the channel's own segments into the FIFO mplayer
+         * reads (see hls.h). */
+        unlink(STREAM_FIFO_PATH);
+        if (mkfifo(STREAM_FIFO_PATH, 0600) != 0 ||
+            !hls_start(g_live_direct_url, STREAM_FIFO_PATH)) {
+            eb_log_line("play: live direct feed did not start");
+            banner_enqueue("Couldn't tune in to that channel - try another");
+            g_live_direct = 0;
+            return;
+        }
+        snprintf(url, sizeof(url), "%s", STREAM_FIFO_PATH);
+    } else {
+        eb_stream_url(&g_cfg, item_id, g_info_item.media_source_id, copy_codec, &profile, start_ticks,
+                      g_play_session_id, g_burned_in_sub_index, g_current_audio_index, url, sizeof(url));
+        eb_stream_url_add_live(url, sizeof(url), g_live_stream_id);
+        stream_via_curl_if_https(url, sizeof(url));
+    }
     /* Deliberately no item_id/title/url here — those identify what's in
      * someone's library, not how MiSTerEmby behaved. */
     eb_log_line("play: %s profile=%dx%d@%d fb_phys_h=%d line_double=%d resume=%.0fs",
-                copy_codec ? "direct-stream" : "transcode",
+                g_live_direct ? "live-direct" : copy_codec ? "direct-stream" : "transcode",
                 profile.max_width, profile.max_height, profile.video_bitrate,
                 fb->phys_height, fb->line_double, offset_secs);
 
@@ -4638,7 +4678,7 @@ static void play(FBDev *fb, const char *item_id, double offset_secs)
     g_paused          = 0;
     g_last_progress_report = now_sec();
     eb_report_start(&g_cfg, item_id, g_play_session_id, start_ticks,
-                    copy_codec ? "DirectStream" : "Transcode");
+                    g_live_direct ? "DirectPlay" : copy_codec ? "DirectStream" : "Transcode");
 
     /* Picture zoom survives restarts of the SAME title (that's exactly how
      * the PICTURE tab applies it — see submenu_confirm) but never carries
@@ -4981,8 +5021,11 @@ vf_done:;
          * measured keeping only ~1.2x real time on a 1080p source, so the
          * buffer is what absorbs a server slowdown. Starting at 12% (~2MB,
          * ~7s) keeps the start roughly where it was. */
-        args[an++] = "-cache";    args[an++] = "16384";
-        args[an++] = "-cache-min"; args[an++] = "12";
+        /* A direct live channel is small (~1Mbps at 640x360) and already
+         * comes in whole segments, so it starts on much less: 4% of 4MB is
+         * a second or two, not the transcode's ~7s. */
+        args[an++] = "-cache";    args[an++] = g_live_direct ? "4096" : "16384";
+        args[an++] = "-cache-min"; args[an++] = g_live_direct ? "4" : "12";
         /* mplayer's own native MPEG-TS demuxer sometimes misses the
          * video PID on the server's transcoded TS output (only finds
          * audio) — forcing the ffmpeg/libavformat demuxer instead

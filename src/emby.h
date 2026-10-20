@@ -248,6 +248,9 @@ typedef struct {
      * untouched, even when eb_direct_stream_codec says it could. For
      * troubleshooting a file that plays badly direct. */
     int  transcode_always;
+    /* "LIVE_TRANSCODE" config line: always have the server convert Live TV,
+     * never play a channel's own stream directly (see hls.h). */
+    int  live_transcode;
     /* "CINEMA_MODE" config line: play the trailers Emby's Cinema Mode picks
      * (eb_list_intros) before a film started from the beginning. */
     int  cinema_mode;
@@ -546,6 +549,19 @@ int eb_list_recordings(const EbConfig *cfg, int start_index, EbItem *out, int ma
  * tuner; eb_report_live_stopped also ends the dashboard session, and never
  * touches watch state. sync=1 is for app exit, where a background thread
  * would never get to run. */
+/* A channel's own stream address (its M3U entry's URL) as Emby reports it,
+ * without asking Emby to open it — for Live TV direct mode. 0 when the
+ * channel isn't a plain http(s) stream. */
+int eb_live_stream_url(const EbConfig *cfg, const char *channel_id, char *out, int out_len);
+
+/* GET a URL that isn't on the Emby server (an IPTV playlist): redirects
+ * followed, TLS always verified. Returns the malloc'd body, with the final
+ * URL after redirects in eff_url, or NULL on failure. */
+char *eb_fetch_url(const char *url, int timeout_s, char *eff_url, size_t eff_len);
+/* The same GET as a background curl writing the body to fd. Returns its
+ * pid (the caller waits on and may kill it), or -1. */
+pid_t eb_spawn_url_to_fd(const char *url, int fd, int timeout_s);
+
 /* Room for a live stream id: Emby's are three 32-character hex ids joined by
  * underscores (98 characters), longer than any item id. */
 #define EB_LIVE_ID_LEN 160

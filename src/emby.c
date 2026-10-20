@@ -789,6 +789,74 @@ pid_t eb_spawn_stream_curl(const EbConfig *cfg, const char *url, const char *fif
     _exit(127);
 }
 
+/* ── fetching from elsewhere than the Emby server (Live TV direct mode) ─────
+ * An IPTV stream lives on its broadcaster's own host, not the Emby server:
+ * no Emby headers, redirects followed, and TLS always verified — the
+ * INSECURE_TLS opt-out is for a self-signed Emby server only. A browser-ish
+ * User-Agent because some stream hosts turn curl's own away. */
+#define EB_EXT_UA "Mozilla/5.0 (X11; Linux armv7l) MiSTerEmby"
+#define EB_EFFECTIVE_MARK "\n#MISTEREMBY-EFFECTIVE-URL:"
+
+char *eb_fetch_url(const char *url, int timeout_s, char *eff_url, size_t eff_len)
+{
+    char timeout[16];
+    snprintf(timeout, sizeof(timeout), "%d", timeout_s);
+    const char *argv[20];
+    int n = 0;
+    argv[n++] = "curl";
+    argv[n++] = "-sfL";
+    const char *ca = eb_ca_bundle();
+    if (ca) { argv[n++] = "--cacert"; argv[n++] = ca; }
+    argv[n++] = "--max-time"; argv[n++] = timeout;
+    argv[n++] = "-A"; argv[n++] = EB_EXT_UA;
+    argv[n++] = "-w"; argv[n++] = EB_EFFECTIVE_MARK "%{url_effective}";
+    argv[n++] = url;
+    argv[n]   = NULL;
+
+    int ok = 0;
+    char *body = eb_curl_run((char *const *)argv, 1, &ok);
+    if (!body) return NULL;
+    if (!ok) { free(body); return NULL; }
+    /* The final URL (after any redirect) is what relative entries in a
+     * playlist resolve against; curl appends it after the body. */
+    char *mark = strstr(body, EB_EFFECTIVE_MARK);
+    if (eff_len) eff_url[0] = '\0';
+    if (mark) {
+        if (eff_len) {
+            snprintf(eff_url, eff_len, "%s", mark + strlen(EB_EFFECTIVE_MARK));
+            eff_url[strcspn(eff_url, "\r\n")] = '\0';
+        }
+        *mark = '\0';
+    } else if (eff_len) {
+        snprintf(eff_url, eff_len, "%s", url);
+    }
+    return body;
+}
+
+pid_t eb_spawn_url_to_fd(const char *url, int fd, int timeout_s)
+{
+    char timeout[16];
+    snprintf(timeout, sizeof(timeout), "%d", timeout_s);
+    const char *argv[20];
+    int n = 0;
+    argv[n++] = "curl";
+    argv[n++] = "-sfL";
+    const char *ca = eb_ca_bundle();
+    if (ca) { argv[n++] = "--cacert"; argv[n++] = ca; }
+    argv[n++] = "--max-time"; argv[n++] = timeout;
+    argv[n++] = "-A"; argv[n++] = EB_EXT_UA;
+    argv[n++] = url;
+    argv[n]   = NULL;
+
+    pid_t pid = fork();
+    if (pid != 0) return pid;
+    dup2(fd, STDOUT_FILENO);
+    int devnull = open("/dev/null", O_WRONLY);
+    if (devnull >= 0) { dup2(devnull, STDERR_FILENO); close(devnull); }
+    execv(CURL_BIN, (char *const *)argv);
+    _exit(127);
+}
+
 static char *eb_request_alloc(const EbConfig *cfg, const char *method,
                                const char *path_and_query, const char *body_file,
                                int timeout_secs)
@@ -967,6 +1035,11 @@ int eb_config_load(EbConfig *cfg)
 
         if (!strcasecmp(line, "TRANSCODE_ALWAYS")) {
             cfg->transcode_always = 1;
+            continue;
+        }
+
+        if (!strcasecmp(line, "LIVE_TRANSCODE")) {
+            cfg->live_transcode = 1;
             continue;
         }
 
@@ -2000,6 +2073,34 @@ int eb_list_recordings(const EbConfig *cfg, int start_index, EbItem *out, int ma
         if (out[i].type != EB_TYPE_EPISODE) out[i].type = EB_TYPE_MOVIE;
     eb_response_free(&r);
     return n;
+}
+
+int eb_live_stream_url(const EbConfig *cfg, const char *channel_id, char *out, int out_len)
+{
+    char safe_id[EB_ID_LEN];
+    eb_sanitize_id(channel_id, safe_id, sizeof(safe_id));
+    out[0] = '\0';
+    /* AutoOpenLiveStream=false: only the channel's details, so the server
+     * doesn't start pulling a stream nobody is going to read from it. */
+    char path[256];
+    snprintf(path, sizeof(path),
+        "/Items/%s/PlaybackInfo?UserId=%s&AutoOpenLiveStream=false&IsPlayback=false",
+        safe_id, cfg->user_id);
+    EbResponse r;
+    if (!eb_post_fetch(cfg, path, "{}", &r)) return 0;
+    const JsonNode *root = json_root(&r.doc);
+    char proto[16] = "";
+    copy_raw_str(&r.doc, root, "MediaSources[0].Protocol", proto, sizeof(proto));
+    const char *p = json_as_str(json_find(&r.doc, root, "MediaSources[0].Path"), "");
+    int ok = !strcasecmp(proto, "Http") &&
+             (!strncasecmp(p, "http://", 7) || !strncasecmp(p, "https://", 8)) &&
+             strlen(p) < (size_t)out_len;
+    /* Only characters a URL can carry, so nothing odd reaches curl's argv. */
+    for (const char *q = p; ok && *q; q++)
+        if ((unsigned char)*q <= ' ' || (unsigned char)*q >= 0x7F) ok = 0;
+    if (ok) snprintf(out, out_len, "%s", p);
+    eb_response_free(&r);
+    return ok;
 }
 
 int eb_live_open(const EbConfig *cfg, const char *channel_id,

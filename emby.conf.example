@@ -84,6 +84,17 @@ PAL
 # TRANSCODE_ALWAYS
 
 
+# ── Live TV ────────────────────────────────────────────────────────────────
+# Live TV comes from your Emby server's TV sources (Emby dashboard: Live TV >
+# TV Sources, e.g. an M3U playlist). When a channel's own stream offers a
+# small enough version (up to 640x360), MiSTerEmby plays it directly, with
+# no work for the server; anything bigger, encrypted or refused is
+# converted by the server as usual. Add a line containing just
+# LIVE_TRANSCODE to always have the server convert Live TV.
+#
+# LIVE_TRANSCODE
+
+
 # ── Troubleshooting: request log ───────────────────────────────────────────
 # Add a line containing just DEBUGLOG and MiSTerEmby writes
 # /media/fat/misteremby/debug.log. Off by default; the file is overwritten
