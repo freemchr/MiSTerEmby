@@ -1,0 +1,1227 @@
+/* All the decorative/audio-reactive drawing the app layers behind its
+ * screens: the starfield (About/setup and a now-playing mode), rain,
+ * Nebula (our audio-reactive plasma),
+ * Now Spinning's CD disc + graphic EQ, the VU meters, and the PCM export
+ * reader that feeds the reactive ones. Moved verbatim out of main.c —
+ * see visualizers.h for the public surface; everything else in here is
+ * internal state/tuning those effects own outright. */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <math.h>
+#include "visualizers.h"
+#include "draw.h"
+#include "util.h"
+#include "stb_image.h"   /* declarations only — the implementation is compiled in main.c */
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+/* Simple "flying through stars" background for the About screen — each
+ * star has a depth (z) that shrinks every frame; projecting x/y by 1/z
+ * makes it appear to accelerate toward the viewer, and it respawns at max
+ * depth (from a random direction) once it passes the camera or drifts
+ * off-screen. Pure decoration, redrawn fresh every frame since draw_about()
+ * itself is already called on every loop tick while the screen is open. */
+#define STAR_COUNT 40
+typedef struct { float x, y, z; } Star;
+static Star g_stars[STAR_COUNT];
+static int  g_stars_init = 0;
+
+static float star_frand_pm1(void) { return ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f; }
+
+static void star_respawn(Star *s)
+{
+    s->x = star_frand_pm1();
+    s->y = star_frand_pm1();
+    s->z = 1.0f;
+}
+
+/* Longest trail a star is allowed to draw, in pixel steps — a star that
+ * respawns right in front of the camera can jump several screen-widths in
+ * scale in one frame; without a cap that one frame draws a stray line
+ * clean across the screen instead of a short streak. */
+#define STAR_TRAIL_MAX 14
+
+void draw_starfield(FBDev *fb)
+{
+    if (!g_stars_init) {
+        g_stars_init = 1;
+        for (int i = 0; i < STAR_COUNT; i++) {
+            star_respawn(&g_stars[i]);
+            g_stars[i].z = 0.05f + ((float)rand() / (float)RAND_MAX) * 0.95f;
+        }
+    }
+    for (int i = 0; i < STAR_COUNT; i++) {
+        Star *s = &g_stars[i];
+        float z_prev = s->z;
+        /* Was 0.012f, tuned back when this screen redrew at roughly half
+         * its now-fixed rate (see g_fb_flip_count's comment) — halved to
+         * land back at the approach speed it was tuned at. */
+        s->z -= 0.006f;
+        if (s->z <= 0.05f) { star_respawn(s); continue; }
+
+        float scale = 1.0f / s->z;
+        int sx = (int)(fb->width  / 2 + s->x * scale * (fb->width  / 4));
+        int sy = (int)(fb->height / 2 + s->y * scale * (fb->height / 4));
+        if (sx < 0 || sx >= fb->width || sy < 0 || sy >= fb->height) { star_respawn(s); continue; }
+
+        int size = scale > 2.2f ? 2 : 1;   /* stars get a touch bigger as they approach */
+        uint8_t bright = scale > 1.4f ? 255 : 150;
+
+        /* Motion-blur trail: a short streak from where this star was last
+         * frame to where it is now, fading in toward the head — same
+         * "faster = more blur" self-scaling as the spinning disc's, just as a
+         * fading streak instead of an averaged sample (better suited to a
+         * point this small). Stars near the center barely move frame to
+         * frame (short/no streak); ones rushing past the camera get a
+         * proper hyperspace trail. */
+        float scale_prev = 1.0f / z_prev;
+        int psx = (int)(fb->width  / 2 + s->x * scale_prev * (fb->width  / 4));
+        int psy = (int)(fb->height / 2 + s->y * scale_prev * (fb->height / 4));
+        int dx = sx - psx, dy = sy - psy;
+        int steps = abs(dx) > abs(dy) ? abs(dx) : abs(dy);
+        if (steps > STAR_TRAIL_MAX) steps = STAR_TRAIL_MAX;
+        if (steps < 1) steps = 1;
+
+        for (int t = 0; t <= steps; t++) {
+            float frac = (float)t / steps;
+            int px = psx + (int)(dx * frac + 0.5f);
+            int py = psy + (int)(dy * frac + 0.5f);
+            uint8_t alpha = (uint8_t)(60 + frac * frac * 195);   /* dim tail, full-bright head */
+            fb_fill_rect_alpha(fb, px, py, size, size, bright, bright, bright, alpha);
+        }
+    }
+}
+
+/* Now-playing background effect #2 — simple falling rain/matrix-style
+ * drops, same cost class as the starfield above (one small struct array,
+ * a handful of fb_fill_rect_alpha calls per particle, no per-pixel loops).
+ * Each drop is a short 3-pixel streak (brightest at the leading/bottom
+ * edge, fading upward) rather than a single pixel, so it actually reads as
+ * "falling" instead of just scattered static dots. */
+#define RAIN_COUNT 60
+typedef struct { float x, y, speed; uint8_t bright; } RainDrop;
+static RainDrop g_rain[RAIN_COUNT];
+static int      g_rain_init = 0;
+
+static void rain_respawn(RainDrop *d, FBDev *fb, int initial)
+{
+    d->x     = (float)(rand() % fb->width);
+    d->y     = initial ? (float)(rand() % fb->height) : -4.0f;
+    /* Was 1.5f-4.0f, tuned back when this screen redrew at roughly half its
+     * now-fixed rate (see g_fb_flip_count's comment) — halved to land back
+     * at the fall speed it was tuned at. */
+    d->speed = (1.5f + ((float)rand() / (float)RAND_MAX) * 2.5f) * 0.5f;
+    d->bright = (uint8_t)(120 + rand() % 136);
+}
+
+void draw_rain(FBDev *fb)
+{
+    if (!g_rain_init) {
+        g_rain_init = 1;
+        for (int i = 0; i < RAIN_COUNT; i++) rain_respawn(&g_rain[i], fb, 1);
+    }
+    for (int i = 0; i < RAIN_COUNT; i++) {
+        RainDrop *d = &g_rain[i];
+        d->y += d->speed;
+        if (d->y >= fb->height) rain_respawn(d, fb, 0);
+
+        int sx = (int)d->x, sy = (int)d->y;
+        uint8_t b = d->bright;
+        /* Soft blue-white tint (vs. the starfield's plain white) so the two
+         * effects read as distinct at a glance. */
+        fb_fill_rect_alpha(fb, sx, sy,     1, 1, (uint8_t)(b*0.7f), (uint8_t)(b*0.8f), b, 255);
+        fb_fill_rect_alpha(fb, sx, sy - 2, 1, 1, (uint8_t)(b*0.7f), (uint8_t)(b*0.8f), b, 140);
+        fb_fill_rect_alpha(fb, sx, sy - 4, 1, 1, (uint8_t)(b*0.7f), (uint8_t)(b*0.8f), b, 70);
+    }
+}
+
+/* Fireworks — the what's-new (changelog-before-install) screen's backdrop,
+ * per user request: sporadically a single white pixel launches from the
+ * bottom, climbs, and "pops" at its apex into a burst of colored particles
+ * that scatter under gravity and fade out; a third of the particles carry
+ * a short motion-blur streak (same trailing-arc idea as the starfield's).
+ * Everything advances on real elapsed time (now_sec() deltas) so the pacing doesn't change with the redraw rate — the lesson
+ * every per-frame-tuned effect above had to relearn when the redraw rate
+ * doubled. Horizontal velocities are PAR-scaled so a burst reads as a
+ * CIRCLE on the real 4:3 screen instead of a tall ellipse. */
+#define FW_ROCKETS       6
+#define FW_PARTICLES   360
+#define FW_BURST_MIN    60
+#define FW_BURST_VAR    40
+
+typedef struct { float x, y, vx, vy; int alive; } FwRocket;
+typedef struct {
+    float   x, y, vx, vy;
+    float   life, max_life;
+    uint8_t r, g, b;
+    int     blur, alive;
+} FwParticle;
+
+static FwRocket   fw_rockets[FW_ROCKETS];
+static FwParticle fw_parts[FW_PARTICLES];
+static double     fw_last_tick   = 0.0;
+static double     fw_next_launch = 0.0;
+
+/* One color family per burst — picked per rocket, with per-particle
+ * brightness variation applied at spawn. */
+static const uint8_t FW_COLORS[][3] = {
+    { 0xFF, 0x50, 0x40 },   /* red        */
+    { 0xFF, 0xC8, 0x40 },   /* gold       */
+    { 0x50, 0xE0, 0xFF },   /* cyan       */
+    { 0x60, 0xFF, 0x60 },   /* green      */
+    { 0xFF, 0x60, 0xE0 },   /* magenta    */
+    { 0xE8, 0xE8, 0xFF },   /* white-blue */
+};
+#define FW_COLOR_COUNT (int)(sizeof(FW_COLORS) / sizeof(FW_COLORS[0]))
+
+static void fw_burst(FBDev *fb, float x, float y)
+{
+    const uint8_t *col = FW_COLORS[rand() % FW_COLOR_COUNT];
+    int want = FW_BURST_MIN + rand() % FW_BURST_VAR;
+    double par = par_correction(fb);
+    for (int i = 0; i < FW_PARTICLES && want > 0; i++) {
+        FwParticle *p = &fw_parts[i];
+        if (p->alive) continue;
+        want--;
+
+        float ang   = ((float)rand() / (float)RAND_MAX) * 2.0f * (float)M_PI;
+        float speed = fb->height * (0.10f + ((float)rand() / (float)RAND_MAX) * 0.28f);
+        p->x  = x;
+        p->y  = y;
+        p->vx = cosf(ang) * speed * (float)par;
+        p->vy = sinf(ang) * speed;
+        p->max_life = 0.8f + ((float)rand() / (float)RAND_MAX) * 0.9f;
+        p->life     = p->max_life;
+        /* Same family, varied brightness, so the burst shimmers instead of
+         * being one flat color. */
+        float bright = 0.6f + ((float)rand() / (float)RAND_MAX) * 0.4f;
+        p->r = (uint8_t)(col[0] * bright);
+        p->g = (uint8_t)(col[1] * bright);
+        p->b = (uint8_t)(col[2] * bright);
+        p->blur  = (rand() % 3 == 0);
+        p->alive = 1;
+    }
+}
+
+void draw_fireworks(FBDev *fb)
+{
+    double now = now_sec();
+    double dt = (fw_last_tick > 0.0) ? now - fw_last_tick : 0.0;
+    fw_last_tick = now;
+    if (dt < 0.0 || dt > 0.25) dt = 0.0;   /* clamp a long pause/clock jump */
+
+    float grav = fb->height * 0.28f;   /* px/sec^2, gentle — embers drift down, not plummet */
+
+    /* Sporadic launches: whenever the timer lapses AND a rocket slot is
+     * free. The randomized gap is what makes it read as fireworks rather
+     * than a fountain. */
+    if (now >= fw_next_launch) {
+        for (int i = 0; i < FW_ROCKETS; i++) {
+            if (fw_rockets[i].alive) continue;
+            FwRocket *rk = &fw_rockets[i];
+            rk->x  = fb->width * (0.12f + ((float)rand() / (float)RAND_MAX) * 0.76f);
+            rk->y  = (float)fb->height + 2.0f;
+            rk->vx = (((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f) * fb->width * 0.02f;
+            /* Wide launch-speed spread so apex height (and how long the
+             * climb takes) varies a lot burst to burst — a weak launch
+             * pops low and quick, a strong one climbs slowly and pops
+             * near the top; previously this was too narrow a range and
+             * every rocket ended up popping at the very top. */
+            rk->vy = -fb->height * (0.32f + ((float)rand() / (float)RAND_MAX) * 0.50f);
+            rk->alive = 1;
+            break;
+        }
+        fw_next_launch = now + 0.35 + ((double)rand() / RAND_MAX) * 1.0;
+    }
+
+    for (int i = 0; i < FW_ROCKETS; i++) {
+        FwRocket *rk = &fw_rockets[i];
+        if (!rk->alive) continue;
+        rk->x  += rk->vx * (float)dt;
+        rk->y  += rk->vy * (float)dt;
+        rk->vy += grav * 0.9f * (float)dt;   /* decelerating climb */
+
+        /* Pop at the apex (climb spent), or at a ceiling if it was fast
+         * enough to threaten the very top of the screen. */
+        if (rk->vy > -fb->height * 0.06f || rk->y < fb->height * 0.12f) {
+            rk->alive = 0;
+            fw_burst(fb, rk->x, rk->y);
+            continue;
+        }
+
+        int sx = (int)rk->x, sy = (int)rk->y;
+        /* White head + a faint 2-step tail BELOW it (it's climbing). */
+        fb_fill_rect_alpha(fb, sx, sy,     1, 1, 255, 255, 255, 255);
+        fb_fill_rect_alpha(fb, sx, sy + 2, 1, 1, 255, 255, 255, 120);
+        fb_fill_rect_alpha(fb, sx, sy + 4, 1, 1, 255, 255, 255, 50);
+    }
+
+    for (int i = 0; i < FW_PARTICLES; i++) {
+        FwParticle *p = &fw_parts[i];
+        if (!p->alive) continue;
+
+        float px_prev = p->x, py_prev = p->y;
+        p->x  += p->vx * (float)dt;
+        p->y  += p->vy * (float)dt;
+        p->vy += grav * (float)dt;
+        p->life -= (float)dt;
+        if (p->life <= 0.0f || p->y >= fb->height || p->x < -4.0f || p->x >= fb->width + 4.0f) {
+            p->alive = 0;
+            continue;
+        }
+
+        uint8_t alpha = (uint8_t)(255.0f * (p->life / p->max_life));
+        int sx = (int)p->x, sy = (int)p->y;
+        if ((unsigned)sx < (unsigned)fb->width && (unsigned)sy < (unsigned)fb->height)
+            fb_fill_rect_alpha(fb, sx, sy, 1, 1, p->r, p->g, p->b, alpha);
+
+        if (p->blur) {
+            /* Short streak back toward where it was last frame — dimmer
+             * than the head, same self-scaling-with-speed idea as the
+             * starfield trails. */
+            int bx = (int)((px_prev + p->x) * 0.5f), by = (int)((py_prev + p->y) * 0.5f);
+            int tx = (int)px_prev, ty = (int)py_prev;
+            if ((unsigned)bx < (unsigned)fb->width && (unsigned)by < (unsigned)fb->height)
+                fb_fill_rect_alpha(fb, bx, by, 1, 1, p->r, p->g, p->b, (uint8_t)(alpha / 2));
+            if ((unsigned)tx < (unsigned)fb->width && (unsigned)ty < (unsigned)fb->height)
+                fb_fill_rect_alpha(fb, tx, ty, 1, 1, p->r, p->g, p->b, (uint8_t)(alpha / 4));
+        }
+    }
+}
+
+/* Now-playing background effect #2 (index NOW_PLAYING_BG_NEBULA) — "Nebula",
+ * our own audio-reactive plasma visualizer. It's an ORIGINAL effect written
+ * from scratch, inspired by Ryan Geiss's classic feedback visualizer but not
+ * a port of any of his code — so it carries no third-party licensing.
+ *
+ * How it works, and why it's cheap enough for a Cortex-A9 at ~60fps:
+ *  - A small NEBULA_W x NEBULA_H intensity field is kept between frames. Each
+ *    frame it's resampled through a gentle zoom + slow rotation and decayed
+ *    a little — that feedback is what turns injected shapes into flowing
+ *    plasma trails (the Geiss signature).
+ *  - The live PCM (samples: n int16s, left half then right half — see
+ *    read_af_samples) is injected as a bright centered scope line, and its
+ *    energy speeds up the swirl and palette so the whole thing reacts to
+ *    the music.
+ *  - The field maps through a time-cycling palette and is nearest-neighbour
+ *    upscaled to the framebuffer via precomputed x/y maps (no per-pixel
+ *    divide in the hot loop). All the per-pixel cost is one field this small
+ *    plus one full-screen palette lookup. */
+#define NEBULA_W     160
+#define NEBULA_H      90
+#define NEBULA_MAXW  720
+#define NEBULA_MAXH  576
+#define NEBULA_NATTR   1   /* one gentle "circular attractor" — see the warp loop */
+
+static uint8_t  nebula_buf[2][NEBULA_W * NEBULA_H];
+static int      nebula_cur = 0;
+static double   nebula_pal_phase = 0.0;
+static double   nebula_hue = 0.0;   /* eased toward the current 15s scheme */
+static double   nebula_swirl = 0.0;
+static double   nebula_t = 0.0;   /* attractor-motion clock */
+static int      nebula_xmap[NEBULA_MAXW], nebula_ymap[NEBULA_MAXH];
+static int      nebula_map_w = 0, nebula_map_h = 0;
+
+void draw_nebula(FBDev *fb, const int16_t *samples, int n)
+{
+    if (fb->width > NEBULA_MAXW || fb->height > NEBULA_MAXH) return;   /* OOB guard */
+
+    if (nebula_map_w != fb->width) {
+        for (int x = 0; x < fb->width; x++) nebula_xmap[x] = x * NEBULA_W / fb->width;
+        nebula_map_w = fb->width;
+    }
+    if (nebula_map_h != fb->height) {
+        for (int y = 0; y < fb->height; y++) nebula_ymap[y] = (y * NEBULA_H / fb->height) * NEBULA_W;
+        nebula_map_h = fb->height;
+    }
+
+    uint8_t *prev = nebula_buf[nebula_cur];
+    uint8_t *next = nebula_buf[nebula_cur ^ 1];
+    nebula_cur ^= 1;
+
+    /* Mean-abs of this frame's left channel, normalized to 0..1. */
+    int half = n / 2;
+    double energy = 0.0;
+    for (int i = 0; i < half; i++) { int s = samples[i]; energy += s < 0 ? -s : s; }
+    if (half > 0) energy /= (double)half * 32768.0;
+    if (energy > 1.0) energy = 1.0;
+
+    /* Feedback resample: zoom + slow rotation, both breathing with the audio,
+     * then decay. */
+    /* Global motion: gentle zoom + slow rotation, both breathing with the
+     * audio. */
+    /* Every per-call increment here was tuned while this screen redrew at
+     * roughly half its now-fixed rate (see g_fb_flip_count's comment —
+     * STATE_PLAYING_AUDIO had the same redundant-usleep bug STATE_BROWSE
+     * did, just not yet found/fixed when Nebula was last tuned), so at the
+     * same numbers everything advanced about twice as fast in real time.
+     * ALL of them are compensated to land back at the tuned look: the
+     * swirl/attractor/zoom/palette increments are halved, and decay —
+     * multiplicative per frame, not additive — moves toward 1 so that
+     * applying it twice as often fades a trail at the same per-second
+     * rate as before (0.949^2sec-worth ~= 0.973 per new frame -> ~249/256;
+     * a first pass halved only swirl/attractor and the user immediately
+     * spotted the rest still running fast). */
+    nebula_swirl += (0.010 + energy * 0.05) * 0.5;
+    double theta = 0.022 * sin(nebula_swirl);
+    double zoom  = 1.0 - (0.010 + energy * 0.018) * 0.5;   /* <1 => content flows */
+    double ct = cos(theta) / zoom, st = sin(theta) / zoom;
+    double cx = NEBULA_W / 2.0, cy = NEBULA_H / 2.0;
+    unsigned decay = 249;   /* /256 per frame */
+
+    /* On top of the global spin, one gentle "circular attractor" drifting
+     * behind the cover adds a small bounded radial pull + tangential swirl to
+     * where the feedback is sampled — just enough to curl the waveform,
+     * deliberately weak so it doesn't suck the whole image into a whirlpool.
+     * Louder audio strengthens it a little. */
+    nebula_t += (0.006 + energy * 0.02) * 0.5;   /* see the swirl increment's own comment */
+    static const double asw[NEBULA_NATTR] = { 0.26 };   /* swirl sign/strength */
+    double ax[NEBULA_NATTR], ay[NEBULA_NATTR], asr[NEBULA_NATTR];
+    for (int i = 0; i < NEBULA_NATTR; i++) {
+        /* Small drift around the centre so the single vortex sits behind the
+         * cover and stays gentle — a weak pull that curls the waveform a
+         * little rather than sucking it into a whirlpool. */
+        ax[i] = cx + (NEBULA_W * 0.10) * sin(nebula_t * 0.43);
+        ay[i] = cy + (NEBULA_H * 0.10) * cos(nebula_t * 0.37);
+        asr[i] = 12.0 + energy * 16.0;
+    }
+
+    for (int y = 0; y < NEBULA_H; y++) {
+        double dy = y - cy;
+        double bx = cx - dy * st;
+        double by = cy + dy * ct;
+        uint8_t *nrow = next + y * NEBULA_W;
+        for (int x = 0; x < NEBULA_W; x++) {
+            double dx = x - cx;
+            double fx = bx + dx * ct;
+            double fy = by + dx * st;
+            for (int i = 0; i < NEBULA_NATTR; i++) {
+                double rx = ax[i] - x, ry = ay[i] - y;
+                double fo = asr[i] / (rx * rx + ry * ry + 24.0);
+                fx += rx * fo + (-ry) * fo * asw[i];
+                fy += ry * fo + ( rx) * fo * asw[i];
+            }
+            int sx = (int)fx, sy = (int)fy;
+            uint8_t v = 0;
+            if ((unsigned)sx < (unsigned)NEBULA_W && (unsigned)sy < (unsigned)NEBULA_H)
+                v = prev[sy * NEBULA_W + sx];
+            nrow[x] = (uint8_t)((v * decay) >> 8);
+        }
+    }
+
+    /* Waveform injected additively so overlapping passes build up brightness
+     * and the feedback smears it into plasma over the following frames. */
+    if (half > 0) {
+        double amp = NEBULA_H * 0.40;
+        for (int x = 0; x < NEBULA_W; x++) {
+            int s  = samples[x * half / NEBULA_W];
+            int yy = (int)(cy + (double)s / 32768.0 * amp);
+            if ((unsigned)yy < (unsigned)NEBULA_H) {
+                uint8_t *c = &next[yy * NEBULA_W + x];
+                int t = *c + 170; *c = t > 255 ? 255 : (uint8_t)t;
+                if (yy > 0)           { uint8_t *u = c - NEBULA_W; int e = *u + 90; *u = e > 255 ? 255 : (uint8_t)e; }
+                if (yy < NEBULA_H - 1) { uint8_t *d = c + NEBULA_W; int e = *d + 90; *d = e > 255 ? 255 : (uint8_t)e; }
+            }
+        }
+    }
+
+    /* Colour scheme steps to a new hue family every ~15s (eased in, not an
+     * abrupt cut), with only a slow drift in between — calmer than a constant
+     * rainbow cycle. The golden-angle step keeps consecutive schemes well
+     * separated. Intensity 0 stays black. */
+    double target_hue = (double)((int)(now_sec() / 15.0)) * 2.39996;
+    nebula_hue += (target_hue - nebula_hue) * 0.025;               /* see the swirl block's rate-compensation comment */
+    nebula_pal_phase += (0.0015 + energy * 0.010) * 0.5;   /* only a slow in-scheme drift */
+    uint32_t pal[256];
+    for (int i = 0; i < 256; i++) {
+        double t = i / 255.0;
+        /* Narrower hue spread across intensity (3.4 rad, not a full 2*pi) so a
+         * scheme has a dominant colour family rather than being a full
+         * rainbow — that's what makes the 15s hue step actually read as a
+         * colour change instead of just rotating the same rainbow. */
+        double base = nebula_hue + nebula_pal_phase + t * 3.4;
+        int r = (int)((0.5 + 0.5 * sin(base))           * t * 255.0);
+        int g = (int)((0.5 + 0.5 * sin(base + 2.09439)) * t * 255.0);
+        int b = (int)((0.5 + 0.5 * sin(base + 4.18879)) * t * 255.0);
+        pal[i] = ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+    }
+
+    /* Upscale to the framebuffer (nearest), one 32-bit store per pixel. */
+    for (int y = 0; y < fb->height; y++) {
+        int base = nebula_ymap[y];
+        uint32_t *row = (uint32_t *)(fb->back + (size_t)y * fb->stride);
+        for (int x = 0; x < fb->width; x++)
+            row[x] = pal[next[base + nebula_xmap[x]]];
+    }
+
+    /* A clean scope waveform painted straight onto the framebuffer AFTER the
+     * plasma — it does NOT feed the feedback field, so it stays crisp and
+     * always readable (the centered cover, blitted later by draw_now_playing,
+     * masks the middle, leaving this line visible over the plasma to either
+     * side). Continuous: each column fills the vertical span to the previous
+     * sample so it reads as a line, not dots. */
+    if (half > 0) {
+        int   midy = fb->height / 2;
+        double amp = fb->height * 0.30;
+        int prevy  = midy;
+        for (int x = 0; x < fb->width; x++) {
+            int s  = samples[x * half / fb->width];
+            int yy = midy + (int)((double)s / 32768.0 * amp);
+            if (yy < 0) yy = 0;
+            if (yy >= fb->height) yy = fb->height - 1;
+            int y0 = yy < prevy ? yy : prevy;
+            int y1 = yy < prevy ? prevy : yy;
+            for (int y = y0; y <= y1; y++)
+                *((uint32_t *)(fb->back + (size_t)y * fb->stride) + x) = 0x00E6F0FF;
+            prevy = yy;
+        }
+    }
+}
+
+/* Reads mplayer's live -af export file fresh every call (it's tiny — a
+ * couple KB — cheap enough to re-read at redraw rate). hdr[0]/hdr[1]
+ * (nch/sz) don't match this build's actual export size (confirmed on
+ * hardware the file is only ~2KB total, while nch=2,sz=2048 would imply
+ * 8KB of samples alone) — rather than guess the real header semantics,
+ * just read however many int16 samples are ACTUALLY present after the
+ * header and treat them as one flat buffer. Returns sample count, 0 if
+ * the file isn't there yet (e.g. mplayer hasn't started exporting within
+ * the first frame or two of a track). */
+int read_af_samples(int16_t *buf, int max_samples)
+{
+    FILE *f = fopen(AF_EXPORT_PATH, "rb");
+    if (!f) return 0;
+    int32_t hdr[2];
+    if (fread(hdr, sizeof(int32_t), 2, f) != 2) { fclose(f); return 0; }
+    size_t got = fread(buf, sizeof(int16_t), (size_t)max_samples, f);
+    fclose(f);
+    return (int)got;
+}
+
+/* Classic recording-console-style horizontal level meter: dim background
+ * track, filled from the left up to the current peak level, colored by
+ * ZONE along the bar's own length (green low, yellow mid, red only at the
+ * top end) — not by the level itself, so the color transition point is
+ * fixed regardless of how loud the track is, matching a real VU meter.
+ *
+ * *level is persistent smoothing state (one double per meter, owned by the
+ * caller and passed in every call) — a real VU meter's needle has ballistic
+ * damping (fast rise, slow fall, ~300ms time constant) instead of jumping
+ * to the instantaneous sample peak every redraw; reading raw peaks with no
+ * smoothing read as "unrealistically fast" jitter (user feedback on the
+ * first version of this meter) rather than a natural meter movement. */
+void draw_vu_horizontal(FBDev *fb, const int16_t *samples, int count,
+                                int x0, int y, int w, int height, double *level)
+{
+    fb_fill_rect_alpha(fb, x0, y, w, height, 0x30, 0x30, 0x30, 255);
+    if (w <= 0) return;
+
+    /* count==0 (e.g. paused — see draw_now_playing) falls straight through
+     * with peak left at 0, so the meter decays to empty via the normal
+     * smoothing below instead of freezing on the last real reading. */
+    int peak = 0;
+    for (int i = 0; i < count; i++) {
+        int v = samples[i];
+        if (v < 0) v = -v;
+        if (v > peak) peak = v;
+    }
+    double raw = peak / 32768.0;
+    if (raw > 1.0) raw = 1.0;
+    const double attack = 0.5, decay = 0.06;   /* jump up fast, settle back down slowly */
+    *level += (raw - *level) * (raw > *level ? attack : decay);
+    int filled = (int)(*level * w);
+
+    int green_w  = w * 60 / 100;
+    int yellow_w = w * 25 / 100;   /* zones: 0-60% green, 60-85% yellow, 85-100% red */
+
+    int seg = filled < green_w ? filled : green_w;
+    if (seg > 0) fb_fill_rect_alpha(fb, x0, y, seg, height, 0x30, 0xE0, 0x30, 255);
+
+    if (filled > green_w) {
+        seg = filled - green_w;
+        if (seg > yellow_w) seg = yellow_w;
+        fb_fill_rect_alpha(fb, x0 + green_w, y, seg, height, 0xE0, 0xC0, 0x20, 255);
+    }
+    if (filled > green_w + yellow_w) {
+        seg = filled - green_w - yellow_w;
+        fb_fill_rect_alpha(fb, x0 + green_w + yellow_w, y, seg, height, 0xE0, 0x30, 0x30, 255);
+    }
+}
+
+/* Now Spinning's cover art: the immersive cover rendered as a spinning CD
+ * (circular, with a hole punched in the center) instead of a plain
+ * rectangle. max_h is the same "physical box height" the other immersive
+ * modes pass to blit_fit_centered — the disc's on-screen diameter matches
+ * their cover size exactly.
+ *
+ * Nearest-neighbor per destination pixel, same technique as fb_blit: for
+ * each screen pixel inside the disc, rotate its position back by -angle
+ * and sample the cover at that point, so the RESULT spins while the
+ * sampling math itself stays a simple lookup (no separate rotate-then-
+ * blit pass, no intermediate buffer). Source is treated as its own
+ * center-cropped square (album art is square in practice; a non-square
+ * source just loses its longer edge rather than distorting).
+ *
+ * blur_span is how far (radians) the disc turned since the last redraw —
+ * at DISC_SPEED's higher settings that's tens of degrees per frame, which
+ * without any blur reads as strobing rather than spinning (no motion blur
+ * to fake what a real fast-spinning disc's own persistence of vision
+ * would show). Instead of one sample per pixel, CD_BLUR_TAPS samples are
+ * taken across the swept arc and averaged — a cheap "shutter" rather than
+ * a persistent accumulation buffer, so it costs nothing extra when the
+ * disc is slow or paused (span near 0 collapses back to one sample) and
+ * scales itself to however fast the disc is actually turning. */
+#define CD_HOLE_FRAC 0.16   /* hole radius, as a fraction of the disc radius */
+#define CD_BLUR_TAPS 5
+
+void draw_now_playing_cd(FBDev *fb, const uint8_t *px, int sw, int sh,
+                                 int cx, int cy, int max_h, double angle, double blur_span)
+{
+    if (!px || sw <= 0 || sh <= 0 || max_h <= 0) return;
+
+    double par = par_correction(fb);
+    int ry = max_h / 2;
+    /* rx = ry*par is what makes the disc a true circle ON SCREEN rather
+     * than an oval — same physical-square relationship blit_fit_centered's
+     * own dw/dh math relies on (see its comment). */
+    int rx = (int)(ry * par + 0.5);
+    if (rx < 1 || ry < 1) return;
+
+    int x0 = cx - rx, x1 = cx + rx, y0 = cy - ry, y1 = cy + ry;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > fb->width)  x1 = fb->width;
+    if (y1 > fb->height) y1 = fb->height;
+
+    int side = sw < sh ? sw : sh;   /* centered square crop of the source */
+    int off_x = (sw - side) / 2, off_y = (sh - side) / 2;
+    double hole2 = CD_HOLE_FRAC * CD_HOLE_FRAC;
+
+    /* Taps span [angle - blur_span, angle] — the disc's own trailing arc,
+     * same direction a real motion blur streaks in. */
+    double cs[CD_BLUR_TAPS], sn[CD_BLUR_TAPS];
+    for (int k = 0; k < CD_BLUR_TAPS; k++) {
+        double a = angle - blur_span * ((double)k / (CD_BLUR_TAPS - 1));
+        cs[k] = cos(a); sn[k] = sin(a);
+    }
+
+    for (int fy = y0; fy < y1; fy++) {
+        double v = (double)(fy - cy) / ry;
+        uint32_t *dst_row = (uint32_t *)(fb->back + (size_t)fy * fb->stride);
+        for (int fx = x0; fx < x1; fx++) {
+            double u = (double)(fx - cx) / rx;
+            double r2 = u * u + v * v;
+            if (r2 > 1.0 || r2 < hole2) continue;   /* outside the disc, or in the hole */
+
+            uint32_t acc_r = 0, acc_g = 0, acc_b = 0;
+            for (int k = 0; k < CD_BLUR_TAPS; k++) {
+                /* Rotate the sample point by -angle so the IMAGE appears to
+                 * spin by +angle. */
+                double ru = u * cs[k] + v * sn[k];
+                double rv = -u * sn[k] + v * cs[k];
+
+                int sx = (int)((ru * 0.5 + 0.5) * side);
+                int sy = (int)((rv * 0.5 + 0.5) * side);
+                if (sx < 0) sx = 0; else if (sx >= side) sx = side - 1;
+                if (sy < 0) sy = 0; else if (sy >= side) sy = side - 1;
+
+                const uint8_t *src = px + (size_t)(sy + off_y) * sw * 4 + (size_t)(sx + off_x) * 4;
+                acc_r += src[0]; acc_g += src[1]; acc_b += src[2];
+            }
+            dst_row[fx] = ((acc_r / CD_BLUR_TAPS) << 16) | ((acc_g / CD_BLUR_TAPS) << 8) | (acc_b / CD_BLUR_TAPS);
+        }
+    }
+}
+
+/* Now Spinning's own background: a classic multi-band graphic-EQ bar, full width,
+ * blocky LED-style segments colored green/yellow/red by height (bottom to
+ * top), per user reference. No real FFT (this codebase has never done one
+ * — Nebula above reads raw PCM the same way): each band is a cheap RBJ
+ * resonant bandpass biquad, log-spaced across a nominal 100Hz-8kHz voice/
+ * music range, run over the same live PCM chunk read_af_samples already
+ * hands the VU meters. A real spectrum would need a known sample rate and
+ * an FFT; this doesn't need to be correct, just visibly frequency-
+ * selective and reactive — the assumed 44.1kHz is close enough for a
+ * decorative visualizer regardless of the stream's actual rate. */
+#define EQ_BANDS   24
+#define EQ_SEGS     8
+#define EQ_GAIN   3.0   /* bandpass output is much quieter than raw amplitude — tune to taste.
+                          * Was 7.0: fine against the isolated test tones this was built with,
+                          * but real music has broadband content in every band at once, so most
+                          * bars sat pinned at the top (stuck on red) instead of visibly moving
+                          * with the track — lowered so typical program material leaves headroom
+                          * for the smoothing below to actually show movement. */
+
+static double eq_b0[EQ_BANDS], eq_b2[EQ_BANDS], eq_a1[EQ_BANDS], eq_a2[EQ_BANDS];
+static double eq_x1[EQ_BANDS], eq_x2[EQ_BANDS], eq_y1[EQ_BANDS], eq_y2[EQ_BANDS];
+static double eq_level[EQ_BANDS];
+static int    eq_coeffs_ready = 0;
+
+static void eq_init_coeffs(void)
+{
+    if (eq_coeffs_ready) return;
+    eq_coeffs_ready = 1;
+    const double fs = 44100.0, f_lo = 100.0, f_hi = 8000.0, q = 2.5;
+    for (int i = 0; i < EQ_BANDS; i++) {
+        double f0 = f_lo * pow(f_hi / f_lo, (double)i / (EQ_BANDS - 1));   /* log-spaced centers */
+        double w0 = 2.0 * M_PI * f0 / fs;
+        double alpha = sin(w0) / (2.0 * q);
+        double a0 = 1.0 + alpha;
+        eq_b0[i] =  alpha / a0;          /* RBJ constant-skirt bandpass, b1 == 0 */
+        eq_b2[i] = -alpha / a0;
+        eq_a1[i] = -2.0 * cos(w0) / a0;
+        eq_a2[i] =  (1.0 - alpha) / a0;
+    }
+}
+
+void draw_now_playing_eq(FBDev *fb, const int16_t *samples, int n,
+                                 int x0, int y0, int w, int h)
+{
+    eq_init_coeffs();
+    int half = n / 2;   /* left channel only — same convention as draw_nebula/the VU meters */
+
+    int gap = 2;
+    int bar_w = (w - (EQ_BANDS - 1) * gap) / EQ_BANDS;
+    if (bar_w < 1) bar_w = 1;
+    int seg_gap = 1;
+    int seg_h = (h - (EQ_SEGS - 1) * seg_gap) / EQ_SEGS;
+    if (seg_h < 1) seg_h = 1;
+
+    for (int b = 0; b < EQ_BANDS; b++) {
+        double x1 = eq_x1[b], x2 = eq_x2[b], y1 = eq_y1[b], y2 = eq_y2[b];
+        double b0 = eq_b0[b], b2 = eq_b2[b], a1 = eq_a1[b], a2 = eq_a2[b];
+        double peak = 0.0;
+        for (int i = 0; i < half; i++) {
+            double xn = samples[i] / 32768.0;
+            double yn = b0 * xn + b2 * x2 - a1 * y1 - a2 * y2;
+            x2 = x1; x1 = xn; y2 = y1; y1 = yn;
+            double a = yn < 0 ? -yn : yn;
+            if (a > peak) peak = a;
+        }
+        eq_x1[b] = x1; eq_x2[b] = x2; eq_y1[b] = y1; eq_y2[b] = y2;
+
+        /* count==0 (paused) leaves peak at 0, so bars decay to empty via
+         * the smoothing below instead of freezing — same reasoning as
+         * draw_vu_horizontal. */
+        double raw = peak * EQ_GAIN;
+        if (raw > 1.0) raw = 1.0;
+        double lvl = eq_level[b];
+        const double attack = 0.6, decay = 0.16;   /* decay was 0.10 — quicker fall so a bar
+                                                      * that peaked doesn't linger up there
+                                                      * once the music's actual level has
+                                                      * already dropped. */
+        lvl += (raw - lvl) * (raw > lvl ? attack : decay);
+        eq_level[b] = lvl;
+
+        int lit = (int)(lvl * EQ_SEGS + 0.5);
+        int bx = x0 + b * (bar_w + gap);
+        for (int s = 0; s < EQ_SEGS; s++) {
+            uint8_t r, g, bl;
+            if (s < EQ_SEGS * 6 / 10)       { r = 0x30; g = 0xE0; bl = 0x30; }
+            else if (s < EQ_SEGS * 85 / 100) { r = 0xE0; g = 0xC0; bl = 0x20; }
+            else                              { r = 0xE0; g = 0x30; bl = 0x30; }
+            /* Dim, not invisible, when unlit — reads as an LED strip with
+             * its off segments still faintly visible, like the reference. */
+            uint8_t alpha = (s < lit) ? 255 : 50;
+            int sy = y0 + h - (s + 1) * (seg_h + seg_gap);
+            fb_fill_rect_alpha(fb, bx, sy, bar_w, seg_h, r, g, bl, alpha);
+        }
+    }
+}
+
+/* Now Spinning disc rotation angle, eased toward 0 speed when paused and back up to
+ * full speed on resume — a hard stop/start read as a glitch (the disc is
+ * meant to look like a physical thing spinning under a laser, not a sprite
+ * turning on a fixed clock). State persists across calls: disc_speed is the
+ * disc's current angular velocity, eased toward whichever target (0 when
+ * paused, DISC_SPEED otherwise) with a time-constant so it's frame-rate
+ * independent — same reasoning as draw_vu_horizontal's own smoothing, just
+ * exponential instead of a fixed per-tick step. */
+double now_spinning_disc_angle(int paused, double *out_blur_span)
+{
+    #define DISC_SPEED 11.25    /* rad/sec — a real CD spins at ~21-52 rad/s (200-500 RPM),
+                                  * which would just be a blur at this resolution/frame rate.
+                                  * Halved from 22.5 per user feedback (motion blur scales with
+                                  * speed, so this also halves the blur strength). */
+    #define DISC_SPINDOWN_TAU 0.7 /* seconds to mostly settle into the new speed */
+    static double angle = 0.0, speed = 0.0, last_t = -1.0;
+
+    double t = now_sec();
+    double dt = (last_t < 0.0) ? 0.0 : t - last_t;
+    if (dt > 0.5) dt = 0.5;   /* guard a long gap (screen not visited in a while) from one huge jump */
+    last_t = t;
+
+    double target = paused ? 0.0 : DISC_SPEED;
+    double ease = 1.0 - exp(-dt / DISC_SPINDOWN_TAU);
+    speed += (target - speed) * ease;
+    angle += speed * dt;
+
+    /* How far the disc swept THIS frame — draw_now_playing_cd's motion-
+     * blur tap span (see its own comment). Naturally 0 when paused/just
+     * resumed (speed near 0) and grows with DISC_SPEED, no separate
+     * tuning knob needed. */
+    *out_blur_span = speed * dt;
+
+    double a = fmod(angle, 2.0 * M_PI);
+    if (a < 0.0) a += 2.0 * M_PI;
+    return a;
+    #undef DISC_SPEED
+    #undef DISC_SPINDOWN_TAU
+}
+
+/* Tunnel (now-playing mode): a low-poly 3D wireframe tunnel flythrough,
+ * Star Fox/DOS-demo style — a handful of warped N-gon "rings" receding
+ * into the screen, flown through forever by wrapping each ring's depth
+ * back to the far end once it passes the camera. Travel speed reacts to
+ * the music's energy (read_af_samples' same mean-abs measure Nebula
+ * uses), the whole tunnel slowly tumbles, and its neon colour steps to a
+ * new hue every so often — same step-then-ease idiom as Nebula's colour
+ * scheme (see draw_nebula's comment), just on its own independent timer.
+ *
+ * Lines are blended ADDITIVELY rather than alpha-composited on purpose:
+ * perspective alone makes the warped grid lines converge densely near the
+ * vanishing point, so brightness naturally builds up right where a real
+ * tunnel's "light at the end" would be — no separate distance-glow code
+ * needed. Genuinely 3D (a real perspective divide per vertex, not a faked
+ * 2D spiral): a Cortex-A9 has no hardware divide, but this is TUNNEL_RINGS
+ * * TUNNEL_SIDES divisions a frame (128) against the tens of thousands
+ * that motivated fb_blit's row-lookup-table fix — a non-issue at this
+ * vertex count. */
+#define TUNNEL_SIDES         12
+#define TUNNEL_RINGS         18
+#define TUNNEL_RING_SPACING 0.9
+#define TUNNEL_NEAR_Z       0.45  /* fixed floor on depth — keeps the nearest ring's scale bounded */
+#define TUNNEL_BASE_R       2.0   /* big relative to focal ON PURPOSE: rings closer than d~1.5 project past every screen edge, which is what actually puts the camera INSIDE the tunnel (at 1.0 the whole thing fit in frame and read as an object floating in space) */
+#define TUNNEL_FOCAL_FRAC   0.45  /* focal length as a fraction of fb->height, so it scales PAL/NTSC alike */
+#define TUNNEL_BASE_SPEED   1.1   /* rings/sec through the tunnel at rest */
+#define TUNNEL_ENERGY_SPEED 3.2   /* extra rings/sec at full audio energy */
+#define TUNNEL_ROT_RATE     0.15  /* rad/sec, slow tumble */
+#define TUNNEL_WOBBLE_AMT   0.16  /* radius perturbation — what makes it warped, not a plain cylinder */
+#define TUNNEL_WOBBLE_FREQ  1.0   /* low relative to TUNNEL_SIDES, or the low vertex count aliases a smooth wave into a spiky star */
+#define TUNNEL_WOBBLE_RATE  0.4
+#define TUNNEL_HUE_HOLD    12.0   /* seconds between colour changes */
+#define TUNNEL_HUE_TAU      1.5   /* seconds to ease into the new one */
+/* The winding centerline — what makes this read as FLYING THROUGH a tunnel
+ * rather than looking at a wireframe object from outside (the first cut
+ * kept every ring concentric on a screen-centered axis, and the user
+ * immediately called it out as "not a tunnel you travel through": with no
+ * curvature there is no parallax, so the eye reads it as a static web).
+ * The tunnel's cross-section centers follow a lissajous path in world
+ * space as a function of ABSOLUTE tunnel position s = scroll + depth, and
+ * the camera rides that same path — so nearby rings stay roughly centered
+ * around the viewer while distant ones swing wide with the curve, walls
+ * sweep across the frame as bends flow past, and the vanishing point
+ * wanders instead of sitting nailed to screen center. Amplitudes are in
+ * radius units and deliberately LARGER than the radius: that's what makes
+ * bends strong enough to see the outer wall of the curve ahead. */
+#define TUNNEL_SWAY_X   2.2
+#define TUNNEL_SWAY_Y   1.6
+#define TUNNEL_FREQ_X   0.22
+#define TUNNEL_FREQ_Y   0.16
+/* Beat response: mean-abs of real music sits around 0.1-0.25 on the raw
+ * 0..1 normalization (the first cut fed that in directly and the speed
+ * change was too small to notice — confirmed by user), so energy is
+ * amplified by TUNNEL_ENERGY_AMP before use, and a simple transient
+ * detector (fast level vs slow-follower level) fires "beats" that light
+ * up random wall panels, which then fade out while traveling toward the
+ * camera with their ring. */
+#define TUNNEL_ENERGY_AMP    3.5
+#define TUNNEL_BEAT_RATIO    1.22  /* instant level must exceed slow EMA by this to count as a hit */
+#define TUNNEL_BEAT_FLOOR    0.04  /* and by an absolute floor, so silence can't "beat" on noise */
+#define TUNNEL_BEAT_HOLD     0.11  /* refractory seconds between hits */
+#define TUNNEL_LIT_TAU       0.85  /* seconds for a lit panel to fade */
+#define TUNNEL_LIT_MIN_D     1.2   /* don't fill panels nearer than this — they project enormous */
+
+static double tunnel_scroll    = 0.0;
+static double tunnel_rot       = 0.0;
+static double tunnel_wobble_ph = 0.0;
+static double tunnel_hue       = 0.0;
+static double tunnel_last_tick = -1.0;
+static double tunnel_env_slow  = 0.0;   /* slow energy follower, the beat reference level */
+static double tunnel_beat_at   = 0.0;   /* last beat time, for the refractory hold */
+static float  tunnel_lit[TUNNEL_RINGS][TUNNEL_SIDES];   /* per-panel glow intensity */
+static double tunnel_prev_depth[TUNNEL_RINGS];
+/* The ride itself follows the music (per user request — energy-scaled
+ * speed alone wasn't dynamic enough): every beat KICKS the forward speed
+ * (which then glides back down — accelerate on the hit, decelerate after),
+ * the cruising speed between kicks tracks the song's TEMPO (EMA of
+ * inter-beat gaps), each beat also punches the camera roll in a random
+ * direction, and how hard the tunnel winds follows a slow energy average
+ * (quiet passage = straighter road, loud = twistier). */
+static double tunnel_boost     = 0.0;   /* per-beat forward kick, decaying */
+static double tunnel_rot_vel   = 0.0;   /* per-beat roll punch, decaying */
+static double tunnel_cruise    = TUNNEL_BASE_SPEED;
+static double tunnel_beat_gap  = 0.5;   /* smoothed seconds/beat — 120bpm prior */
+static double tunnel_amp_env   = 0.0;   /* slow energy average driving sway amplitude */
+
+/* Additive scanline fill of one convex wall panel (the quad between two
+ * depth-adjacent rings sharing a side) — the "lit in rhythm" panels. Same
+ * additive blend as tunnel_line so a panel glows THROUGH the grid rather
+ * than covering it. */
+static void tunnel_fill_quad(FBDev *fb, const double *qx, const double *qy,
+                              int r, int g, int b)
+{
+    double ymin = qy[0], ymax = qy[0];
+    for (int i = 1; i < 4; i++) {
+        if (qy[i] < ymin) ymin = qy[i];
+        if (qy[i] > ymax) ymax = qy[i];
+    }
+    int y0 = (int)ymin; if (y0 < 0) y0 = 0;
+    int y1 = (int)ymax; if (y1 >= fb->height) y1 = fb->height - 1;
+
+    for (int y = y0; y <= y1; y++) {
+        double yc = y + 0.5;
+        double xs[4];
+        int nx = 0;
+        for (int e = 0; e < 4; e++) {
+            int e2 = (e + 1) & 3;
+            double ya = qy[e], yb = qy[e2];
+            if ((ya <= yc) == (yb <= yc)) continue;   /* edge doesn't cross this scanline */
+            xs[nx++] = qx[e] + (qx[e2] - qx[e]) * (yc - ya) / (yb - ya);
+        }
+        /* Convex quad: 2 crossings; a slightly bowtied projection can give
+         * 4 — fill between the outermost pair either way. */
+        if (nx < 2) continue;
+        double xa = xs[0], xb = xs[0];
+        for (int i = 1; i < nx; i++) {
+            if (xs[i] < xa) xa = xs[i];
+            if (xs[i] > xb) xb = xs[i];
+        }
+        int px0 = (int)xa; if (px0 < 0) px0 = 0;
+        int px1 = (int)xb; if (px1 >= fb->width) px1 = fb->width - 1;
+        uint32_t *row = (uint32_t *)(fb->back + (size_t)y * fb->stride);
+        for (int x = px0; x <= px1; x++) {
+            uint32_t v = row[x];
+            int nr = (int)((v >> 16) & 0xFF) + r; if (nr > 255) nr = 255;
+            int ng = (int)((v >>  8) & 0xFF) + g; if (ng > 255) ng = 255;
+            int nb = (int)( v        & 0xFF) + b; if (nb > 255) nb = 255;
+            row[x] = ((uint32_t)nr << 16) | ((uint32_t)ng << 8) | (uint32_t)nb;
+        }
+    }
+}
+
+/* Plain DDA, additive-blended straight into the back buffer (0x00RRGGBB,
+ * same layout fb_fill_rect_alpha packs) — no alpha/coverage math, thin
+ * hard-edged 1px lines are exactly the retro low-poly look this wants. */
+static void tunnel_line(FBDev *fb, double x0, double y0, double x1, double y1,
+                         int r, int g, int b)
+{
+    /* Trivial reject for fully-offscreen lines — with the camera INSIDE
+     * the tunnel, the nearest rings are mostly outside the frame, so a
+     * good share of segments never touch a visible pixel at all. */
+    if ((x0 < 0 && x1 < 0) || (x0 >= fb->width  && x1 >= fb->width))  return;
+    if ((y0 < 0 && y1 < 0) || (y0 >= fb->height && y1 >= fb->height)) return;
+
+    double dx = x1 - x0, dy = y1 - y0;
+    double len = sqrt(dx * dx + dy * dy);
+    int steps = (int)len;
+    if (steps < 1) steps = 1;
+    if (steps > 4096) return;   /* degenerate projection blow-up guard */
+    double sx = dx / steps, sy = dy / steps;
+    double x = x0, y = y0;
+    for (int i = 0; i <= steps; i++) {
+        int px = (int)x, py = (int)y;
+        if ((unsigned)px < (unsigned)fb->width && (unsigned)py < (unsigned)fb->height) {
+            uint32_t *p = (uint32_t *)(fb->back + (size_t)py * fb->stride) + px;
+            uint32_t v = *p;
+            int nr = (int)((v >> 16) & 0xFF) + r; if (nr > 255) nr = 255;
+            int ng = (int)((v >>  8) & 0xFF) + g; if (ng > 255) ng = 255;
+            int nb = (int)( v        & 0xFF) + b; if (nb > 255) nb = 255;
+            *p = ((uint32_t)nr << 16) | ((uint32_t)ng << 8) | (uint32_t)nb;
+        }
+        x += sx; y += sy;
+    }
+}
+
+void draw_tunnel(FBDev *fb, const int16_t *samples, int n)
+{
+    double now = now_sec();
+    double dt = (tunnel_last_tick > 0.0) ? now - tunnel_last_tick : 0.0;
+    if (dt < 0.0 || dt > 0.25) dt = 0.0;   /* clamp a long pause/clock jump, not a real frame gap */
+    tunnel_last_tick = now;
+
+    int half = n / 2;
+    double energy = 0.0;
+    for (int i = 0; i < half; i++) { int s = samples[i]; energy += s < 0 ? -s : s; }
+    if (half > 0) energy /= (double)half * 32768.0;
+    /* Amplified into a usable 0..1 range — see TUNNEL_ENERGY_AMP. */
+    double e = energy * TUNNEL_ENERGY_AMP;
+    if (e > 1.0) e = 1.0;
+
+    /* Beat: the instant level popping out above its own slow follower. */
+    tunnel_env_slow += (energy - tunnel_env_slow) * (1.0 - exp(-dt / 0.6));
+    int beat = (energy > tunnel_env_slow * TUNNEL_BEAT_RATIO &&
+                energy > TUNNEL_BEAT_FLOOR &&
+                now - tunnel_beat_at > TUNNEL_BEAT_HOLD);
+    if (beat) {
+        /* Tempo estimate from the gap to the previous beat — gaps beyond
+         * 2s are section breaks, not tempo, and would drag the average. */
+        double gap = now - tunnel_beat_at;
+        if (gap < 2.0) tunnel_beat_gap += (gap - tunnel_beat_gap) * 0.25;
+        tunnel_beat_at = now;
+        tunnel_boost   += 2.2 * (0.5 + e);                              /* forward kick */
+        tunnel_rot_vel += ((rand() & 1) ? 0.5 : -0.5) * (0.4 + e);      /* roll punch, random direction */
+    }
+    tunnel_boost   *= exp(-dt / 0.45);   /* the glide back down after each kick */
+    tunnel_rot_vel *= exp(-dt / 0.60);
+
+    /* Cruise speed follows the song's tempo (~60bpm -> ~0.9 rings/s,
+     * ~150bpm -> ~2.3), easing over a couple of seconds so a section
+     * change reads as the ride accelerating/braking rather than snapping.
+     * With no beats for a while (pause, ambient outro) it settles back to
+     * the resting rate. */
+    double cruise_target = (now - tunnel_beat_at < 2.5)
+        ? TUNNEL_BASE_SPEED * (0.55 + (60.0 / tunnel_beat_gap) / 110.0)
+        : TUNNEL_BASE_SPEED;
+    tunnel_cruise += (cruise_target - tunnel_cruise) * (1.0 - exp(-dt / 2.0));
+
+    /* Winding strength follows a slow energy average — see the statics'
+     * comment. Applied to the sway amplitudes below (camera and rings from
+     * the same value, so the camera always stays on the centerline). */
+    tunnel_amp_env += (e - tunnel_amp_env) * (1.0 - exp(-dt / 1.2));
+
+    tunnel_scroll    += dt * (tunnel_cruise + e * TUNNEL_ENERGY_SPEED * 0.6 + tunnel_boost);
+    tunnel_rot       += dt * (TUNNEL_ROT_RATE * (1.0 + e * 2.0) + tunnel_rot_vel);
+    tunnel_wobble_ph += dt * TUNNEL_WOBBLE_RATE;
+
+    /* Same "step to a new target every N seconds, ease toward it" shape as
+     * Nebula's colour scheme, but on its own hold/ease timing and via the
+     * frame-rate-independent exponential ease (1-e^-dt/tau) used elsewhere
+     * for the Now Spinning disc's spin-down — Nebula's own additive-per-
+     * call ease predates that and is tuned to a fixed assumed frame rate,
+     * not worth converting here since a fresh effect can just start right. */
+    double target_hue = (double)((int)(now / TUNNEL_HUE_HOLD)) * 2.39996;
+    tunnel_hue += (target_hue - tunnel_hue) * (1.0 - exp(-dt / TUNNEL_HUE_TAU));
+    int cr = (int)((0.5 + 0.5 * sin(tunnel_hue))           * 255.0);
+    int cg = (int)((0.5 + 0.5 * sin(tunnel_hue + 2.09439)) * 255.0);
+    int cb = (int)((0.5 + 0.5 * sin(tunnel_hue + 4.18879)) * 255.0);
+
+    double par = par_correction(fb);
+    double cx = fb->width / 2.0, cy = fb->height / 2.0;
+    double focal = fb->height * TUNNEL_FOCAL_FRAC;
+
+    /* The camera's own spot on the winding centerline — ring offsets are
+     * taken RELATIVE to this (see the TUNNEL_SWAY_* comment), which is
+     * exactly "the camera follows the tunnel's path". */
+    double sway_x = TUNNEL_SWAY_X * (0.45 + 0.90 * tunnel_amp_env);
+    double sway_y = TUNNEL_SWAY_Y * (0.45 + 0.90 * tunnel_amp_env);
+    double cam_x = sway_x * sin(tunnel_scroll * TUNNEL_FREQ_X);
+    double cam_y = sway_y * cos(tunnel_scroll * TUNNEL_FREQ_Y);
+
+    double depth[TUNNEL_RINGS];
+    double vx[TUNNEL_RINGS][TUNNEL_SIDES], vy[TUNNEL_RINGS][TUNNEL_SIDES];
+    int    rr[TUNNEL_RINGS], rg[TUNNEL_RINGS], rb[TUNNEL_RINGS];
+
+    for (int i = 0; i < TUNNEL_RINGS; i++) {
+        double d = (double)i - tunnel_scroll;
+        d -= floor(d / TUNNEL_RINGS) * TUNNEL_RINGS;   /* wrap into [0, RINGS) — the flythrough loop */
+        depth[i] = d;
+        double s = tunnel_scroll + d;   /* absolute position along the tunnel — the coordinate the winding path and warp live in, so both stream past as we travel */
+        double z = TUNNEL_NEAR_Z + d * TUNNEL_RING_SPACING;
+        double scale = focal / z;
+
+        double ring_cx = cx + (sway_x * sin(s * TUNNEL_FREQ_X) - cam_x) * scale * par;
+        double ring_cy = cy + (sway_y * cos(s * TUNNEL_FREQ_Y) - cam_y) * scale;
+
+        for (int j = 0; j < TUNNEL_SIDES; j++) {
+            double theta = j * (2.0 * M_PI / TUNNEL_SIDES) + tunnel_rot;
+            double wob = 1.0 + TUNNEL_WOBBLE_AMT *
+                         sin(theta * TUNNEL_WOBBLE_FREQ + s * 0.8 + tunnel_wobble_ph);
+            double r  = TUNNEL_BASE_R * wob;
+            double ry = r * scale;
+            double rx = ry * par;   /* same rx=ry*par relationship as the Now Spinning disc, for a circular (not oval) cross-section */
+            vx[i][j] = ring_cx + rx * cos(theta);
+            vy[i][j] = ring_cy + ry * sin(theta);
+        }
+
+        /* Depth cueing: near rings at full colour fading toward the far
+         * end — on top of this the additive overdraw where distant lines
+         * converge still builds the bright "light at the end" spot. */
+        double fade = 0.30 + 0.70 * (1.0 - d / (double)TUNNEL_RINGS);
+        rr[i] = (int)(cr * fade);
+        rg[i] = (int)(cg * fade);
+        rb[i] = (int)(cb * fade);
+
+        /* A ring whose depth JUMPED up wrapped back to the far end this
+         * frame — it's a "new" ring now, so any still-fading panel glow
+         * it carried dies with the old one instead of teleporting. */
+        if (d > tunnel_prev_depth[i] + TUNNEL_RINGS * 0.5)
+            for (int j = 0; j < TUNNEL_SIDES; j++) tunnel_lit[i][j] = 0.0f;
+        tunnel_prev_depth[i] = d;
+    }
+
+    /* Panel glow: fade what's lit, and light a few random wall panels on
+     * every beat (a couple more the harder it hits). Panels keep their
+     * (ring, side) slot, so a lit one travels toward the camera with its
+     * ring and fades on the way — that's the "painted in rhythm" pulse. */
+    for (int i = 0; i < TUNNEL_RINGS; i++)
+        for (int j = 0; j < TUNNEL_SIDES; j++)
+            if (tunnel_lit[i][j] > 0.0f) {
+                tunnel_lit[i][j] *= (float)exp(-dt / TUNNEL_LIT_TAU);
+                if (tunnel_lit[i][j] < 0.02f) tunnel_lit[i][j] = 0.0f;
+            }
+    if (beat) {
+        int hits = 3 + (int)(e * 4.0);
+        for (int h = 0; h < hits; h++) {
+            int i = rand() % TUNNEL_RINGS;
+            if (depth[i] < TUNNEL_LIT_MIN_D || depth[i] > TUNNEL_RINGS - 2) continue;
+            tunnel_lit[i][rand() % TUNNEL_SIDES] = 1.0f;
+        }
+    }
+    for (int i = 0; i < TUNNEL_RINGS; i++) {
+        int i2 = (i + 1) % TUNNEL_RINGS;
+        if (depth[i2] < depth[i]) continue;       /* the wrap seam — no panel there, same as no rail */
+        if (depth[i]  < TUNNEL_LIT_MIN_D) continue;   /* nearest panels project enormous — skip, same reason spawning does */
+        for (int j = 0; j < TUNNEL_SIDES; j++) {
+            float lit = tunnel_lit[i][j];
+            if (lit <= 0.0f) continue;
+            int j2 = (j + 1) % TUNNEL_SIDES;
+            double qx[4] = { vx[i][j], vx[i][j2], vx[i2][j2], vx[i2][j] };
+            double qy[4] = { vy[i][j], vy[i][j2], vy[i2][j2], vy[i2][j] };
+            /* Fill at a fraction of the line colour so the grid stays
+             * legible over a lit panel (additive, so overlap just glows). */
+            tunnel_fill_quad(fb, qx, qy,
+                             (int)(cr * 0.75 * lit),
+                             (int)(cg * 0.75 * lit),
+                             (int)(cb * 0.75 * lit));
+        }
+    }
+
+    /* Ring edges (the cross-section polygons). */
+    for (int i = 0; i < TUNNEL_RINGS; i++)
+        for (int j = 0; j < TUNNEL_SIDES; j++) {
+            int j2 = (j + 1) % TUNNEL_SIDES;
+            tunnel_line(fb, vx[i][j], vy[i][j], vx[i][j2], vy[i][j2], rr[i], rg[i], rb[i]);
+        }
+
+    /* Rails connecting depth-adjacent rings — array-adjacent rings ARE
+     * depth-adjacent by construction (each one step further in i is
+     * exactly one step further in wrapped depth), except at the single
+     * seam each frame where depth wraps back to 0; skip that one pair
+     * (depth[i2] < depth[i]) or it'd draw a line spanning the whole
+     * tunnel, camera to horizon. */
+    for (int i = 0; i < TUNNEL_RINGS; i++) {
+        int i2 = (i + 1) % TUNNEL_RINGS;
+        if (depth[i2] < depth[i]) continue;
+        for (int j = 0; j < TUNNEL_SIDES; j++)
+            tunnel_line(fb, vx[i][j], vy[i][j], vx[i2][j], vy[i2][j], rr[i], rg[i], rb[i]);
+    }
+}
+
+/* The VizGif background — ONE user-supplied animated GIF at a fixed path,
+ * appended as a single extra now-playing mode after the fixed ones
+ * (Starfield/Rain/Nebula/Now Spinning/Tunnel). Deliberately exactly one
+ * (an earlier version scanned a folder and made a mode per file — per user
+ * request that's gone): drop a vizgif.gif in place and the mode exists,
+ * remove it and the mode disappears from the SELECT cycle entirely.
+ * Presence is checked once at startup (gifviz_scan, cheap — no decode);
+ * the GIF is only actually decoded the first time the mode is selected
+ * (gifviz_load), spinner-covered, and then kept in memory for the rest
+ * of the session — never freed.
+ *
+ * stb_image's own multi-frame GIF loader (stbi_load_gif_from_memory)
+ * returns every frame as one contiguous w*h*4 * frame_count buffer plus a
+ * per-frame delay array already in milliseconds — no extra frame-
+ * management code needed here beyond picking which frame is "now". */
+#define GIFVIZ_PATH            "/media/fat/misteremby/vizgif.gif"
+#define GIFVIZ_MAX_FRAMES       300   /* loops a truncated animation rather than refusing outright */
+#define GIFVIZ_MAX_FILE_BYTES  (16 * 1024 * 1024)
+#define GIFVIZ_MIN_DELAY_MS      20   /* some GIFs encode a 0ms delay for sub-frame tricks */
+
+typedef struct {
+    uint8_t *px;          /* frame_count * w * h * 4 RGBA, or NULL until loaded (or on failure) */
+    int     *delays;      /* frame_count entries, ms */
+    int      w, h, frame_count;
+    int      load_tried;  /* set on the first load attempt, success or failure, so it's not retried every select */
+} GifViz;
+
+static GifViz g_gifviz;
+static int    g_gifviz_present = 0;
+
+void gifviz_scan(void)
+{
+    g_gifviz_present = (access(GIFVIZ_PATH, R_OK) == 0);
+}
+
+int gifviz_present(void) { return g_gifviz_present; }
+
+int gifviz_is_loaded(void)
+{
+    return g_gifviz_present && g_gifviz.load_tried;
+}
+
+void gifviz_load(FBDev *fb)
+{
+    GifViz *g = &g_gifviz;
+    if (!g_gifviz_present || g->load_tried) return;
+    g->load_tried = 1;
+
+    FILE *f = fopen(GIFVIZ_PATH, "rb");
+    if (!f) return;
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (sz <= 0 || sz > GIFVIZ_MAX_FILE_BYTES) { fclose(f); return; }
+
+    uint8_t *buf = malloc((size_t)sz);
+    if (!buf) { fclose(f); return; }
+    size_t got = fread(buf, 1, (size_t)sz, f);
+    fclose(f);
+    if (got != (size_t)sz) { free(buf); return; }
+
+    /* One flip so a slow decode still shows feedback — this is a single
+     * library call, not a loop we can report incremental progress from,
+     * so it's just an "about to be busy" flip. */
+    draw_spinner_frame(fb, 0);
+    fb_flip(fb);
+
+    int *delays = NULL;
+    int w = 0, h = 0, frames = 0, comp = 0;
+    uint8_t *px = stbi_load_gif_from_memory(buf, (int)sz, &delays, &w, &h, &frames, &comp, 4);
+    free(buf);
+    if (!px || w <= 0 || h <= 0 || frames <= 0) {
+        if (px) stbi_image_free(px);
+        free(delays);
+        return;
+    }
+    if (frames > GIFVIZ_MAX_FRAMES) frames = GIFVIZ_MAX_FRAMES;
+    for (int k = 0; k < frames; k++)
+        if (delays[k] < GIFVIZ_MIN_DELAY_MS) delays[k] = GIFVIZ_MIN_DELAY_MS;
+
+    g->px = px;
+    g->delays = delays;
+    g->w = w; g->h = h; g->frame_count = frames;
+}
+
+static int gifviz_frame_at(const GifViz *g, double now)
+{
+    long total_ms = 0;
+    for (int i = 0; i < g->frame_count; i++) total_ms += g->delays[i];
+    if (total_ms <= 0) return 0;
+
+    long t = (long)fmod(now * 1000.0, (double)total_ms);
+    long acc = 0;
+    for (int i = 0; i < g->frame_count; i++) {
+        acc += g->delays[i];
+        if (t < acc) return i;
+    }
+    return g->frame_count - 1;
+}
+
+void draw_gif_bg(FBDev *fb)
+{
+    GifViz *g = &g_gifviz;
+    if (!g->px || g->frame_count <= 0) return;   /* still loading (or failed to decode) */
+
+    int idx = gifviz_frame_at(g, now_sec());
+    const uint8_t *frame = g->px + (size_t)idx * g->w * g->h * 4;
+    /* Always stretched to fill the whole screen — a user-supplied GIF has
+     * no guaranteed aspect ratio, and cropping it to preserve one is out
+     * of scope (per user request: just fill the screen, always). */
+    fb_blit(fb, frame, g->w, g->h, 0, 0, fb->width, fb->height, 255);
+}

@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Zig
+        run: |
+          curl -L https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz | tar -xJ
+          echo "$PWD/zig-x86_64-linux-0.16.0" >> $GITHUB_PATH
+
+      - name: Build ARM binary
+        run: make arm VERSION=${{ github.ref_name }}
+
+      # mplayer-arm is committed to the repo (the build tested on hardware),
+      # so the release ships that exact file. Rebuild it with
+      # tools/build-mplayer.sh when mplayer/vo_fbdev.c changes.
+
+      - name: Package release
+        run: |
+          mkdir -p release/misteremby
+          cp misteremby-arm release/misteremby/
+          cp mplayer-arm release/misteremby/
+          cp tools/MiSTerEmby.sh release/misteremby/
+          cp emby.conf.example release/misteremby/
+          cp -r assets/font release/misteremby/font
+          cp -r assets/subfont release/misteremby/subfont
+          cp -r assets/font2x release/misteremby/font2x
+          cp -r assets/subfont2x release/misteremby/subfont2x
+          cp -r assets/sfx release/misteremby/sfx
+          chmod +x release/misteremby/misteremby-arm
+          chmod +x release/misteremby/mplayer-arm
+          chmod +x release/misteremby/MiSTerEmby.sh
+          cd release
+          zip -r ../misteremby-${{ github.ref_name }}.zip misteremby/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: misteremby-${{ github.ref_name }}.zip

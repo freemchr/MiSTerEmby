@@ -1,0 +1,66 @@
+#ifndef INPUT_H
+#define INPUT_H
+
+/* All the ways a button press reaches the app — evdev gamepads/keyboards
+ * on real hardware (including MiSTer's own virtual echo device), a raw-mode
+ * stdin backend for desktop runs (MISTEREMBY_STDIN=1), and scripted playback
+ * for reproducible screenshots (MISTEREMBY_KEYS). Every source funnels into
+ * the same INP_* bitmask. */
+
+#define INP_UP     0x01
+#define INP_DOWN   0x02
+#define INP_A      0x04
+#define INP_B      0x08
+#define INP_LEFT   0x10
+#define INP_RIGHT  0x20
+#define INP_START  0x40
+#define INP_SELECT 0x80
+#define INP_L      0x100
+#define INP_R      0x200
+
+/* Owned by main.c (set to 0 by its signal handlers to quit). The stdin
+ * backend's 'q' key and a drained MISTEREMBY_KEYS script also request quit
+ * through it — that's the module's only reach into app lifecycle. */
+extern volatile int g_running;
+
+/* Scans /dev/input for new devices (and starts the desktop backends on
+ * their first call). Safe to call repeatedly — only nodes not already
+ * tracked get opened, which is what makes the main loop's periodic rescan
+ * pick up a reconnected wireless pad. */
+void input_open(void);
+
+/* Non-blocking: drains every pending event and returns the union of fresh
+ * press edges as INP_* bits (0 if nothing happened). Auto-repeat is NOT
+ * folded in — see input_repeat. */
+int input_poll(void);
+
+/* Navigation auto-repeat: returns held direction bits at the repeat rate,
+ * 0 otherwise. Kept separate from input_poll so only cursor-movement call
+ * sites opt in — a held direction must not auto-repeat a seek or a track
+ * skip. */
+int input_repeat(void);
+
+/* Discards whatever is queued and parks auto-repeat until every button is
+ * released. Call on screen changes so a press meant for the old screen
+ * can't act on the new one. */
+void input_drain(void);
+
+/* True while SELECT and START are both physically held right now, on any
+ * device (queried the same EVIOCGKEY way input_repeat's direction-holding
+ * check is) — the screenshot combo. A held-state query rather than an
+ * edge, so the two don't have to land in the same input_poll() frame to
+ * count; the caller is responsible for firing on the transition into
+ * "held" rather than every frame it stays true. */
+int input_select_start_held(void);
+
+void input_close(void);
+
+/* One-time device-list query, for a startup diagnostics log line — see the
+ * callers in main.c. Not the same thing as MISTEREMBY_INPUT_DEBUG, which
+ * traces every event live instead of summarizing what's open. */
+int input_device_count(void);
+const char *input_device_node(int i);   /* e.g. "event0" */
+const char *input_device_name(int i);   /* e.g. "Microsoft X-Box 360 pad" */
+int input_device_is_virtual(int i);
+
+#endif

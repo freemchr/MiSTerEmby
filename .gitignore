@@ -1,0 +1,17 @@
+misteremby
+misteremby-arm
+misteremby-preview
+.mplayer-build/
+emby.conf
+token.conf
+device.conf
+crash.log
+__pycache__/
+*.pyc
+.DS_Store
+local-preview.png
+# Object files: `zig cc -c` writes these into the repo root when it is used
+# directly for a per-file warning check (CFLAGS_ARM carries no -Wall, so that
+# is worth doing), and they are trivially easy to sweep up with `git add -A`.
+*.o
+debug.log
