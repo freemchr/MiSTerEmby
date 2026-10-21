@@ -637,10 +637,10 @@ static void spinner_show(FBDev *fb, double seconds)
  * episode numbers into the display name, which keeps draw_browse unchanged
  * (it just draws whatever name it's given). The info screen re-fetches by id
  * and so still shows the clean title. */
-static void home_row_label_episodes(void)
+static void label_episodes(EbItem *items, int n)
 {
-    for (int i = 0; i < g_item_count; i++) {
-        EbItem *it = &g_items[i];
+    for (int i = 0; i < n; i++) {
+        EbItem *it = &items[i];
         if (it->type != EB_TYPE_EPISODE || !it->series_name[0]) continue;
 
         char combined[EB_NAME_LEN];
@@ -654,6 +654,15 @@ static void home_row_label_episodes(void)
         it->name[sizeof(it->name) - 1] = '\0';
     }
 }
+
+static void home_row_label_episodes(void) { label_episodes(g_items, g_item_count); }
+
+/* The home screen's own rows (see draw_home): Continue Watching (recent
+ * channels first) and Next Up, fetched in full with the library list. */
+static EbItem g_home_cw[HOME_ROW_MAX];
+static int    g_home_cw_n = 0;
+static EbItem g_home_nu[HOME_ROW_MAX];
+static int    g_home_nu_n = 0;
 
 /* ── recently watched channels ─────────────────────────────────────────────
  * Continue Watching leads with the last few channels watched. Emby does
@@ -817,14 +826,18 @@ static int fetch_frame_window(int start_index)
         for (int s = 0; s < 5; s++) {
             EbItem probe[1];
             int64_t total = 0;
-            EbItem recent[RECENT_CHANNELS_MAX];
-            int nrecent = (s == 0) ? recent_channels_load(recent, RECENT_CHANNELS_MAX) : 0;
-            int got = (s == 0) ? eb_list_resume(&g_cfg, probe, 1, &total)
-                    : (s == 1) ? eb_list_nextup(&g_cfg, probe, 1, &total)
+            /* Continue Watching and Next Up are fetched whole: the home
+             * screen shows them as rows. */
+            int nrecent = (s == 0) ? recent_channels_load(g_home_cw, RECENT_CHANNELS_MAX) : 0;
+            int got = (s == 0) ? eb_list_resume(&g_cfg, g_home_cw + nrecent,
+                                                HOME_ROW_MAX - nrecent, &total)
+                    : (s == 1) ? eb_list_nextup(&g_cfg, g_home_nu, HOME_ROW_MAX, &total)
                     : (s == 2) ? eb_list_collections(&g_cfg, probe, 1, &total)
                     : (s == 3) ? eb_list_channels(&g_cfg, NULL, 0, probe, 1, &total)
                                : eb_list_recordings(&g_cfg, 0, probe, 1, &total);
             if (got < 0) got = 0;
+            if (s == 0) { g_home_cw_n = nrecent + got; label_episodes(g_home_cw, g_home_cw_n); }
+            if (s == 1) { g_home_nu_n = got;           label_episodes(g_home_nu, g_home_nu_n); }
             if (total <= 0) total = got;
             total += nrecent;
             if (got + nrecent <= 0) continue;
@@ -1082,6 +1095,8 @@ static void refetch_frame_keep_selection(FBDev *fb)
 {
     int abs_sel = g_window_start + g_sel;
     if (!fetch_frame_window(g_window_start)) return;
+    /* The home rows may have gained something just watched. */
+    if (g_stack[g_stack_depth - 1].kind == FRAME_VIEWS) start_cover_prefetch();
     int sel = abs_sel - g_window_start;
     if (sel >= g_item_count) sel = g_item_count - 1;
     if (sel < 0) sel = 0;
@@ -1751,24 +1766,14 @@ static void hero_fetch_to_cache(const char *img_id, const char *tag, const char 
     }
 }
 
-/* The item id whose backdrop the current selection wants, or "" if none.
- * Gated only on the tag being there: parse_item_fields already falls back to
- * the parent's backdrop, which is what gives every episode of a series the
- * series' artwork. */
-static const char *browse_hero_wanted_id(void)
-{
-    EbItem *it = (g_item_count > 0) ? &g_items[g_sel] : NULL;
-    return (it && it->backdrop_tag[0]) ? it->id : "";
-}
 
 /* Same SD-cache-only rule as browse_cover_load: never a network fetch on the
  * main thread, so scrolling can't freeze. An uncached backdrop simply leaves
  * the background black until the prefetch writes it and the next redraw picks
  * it up. */
-static void browse_hero_load(FBDev *fb)
+static void hero_load_item(FBDev *fb, const EbItem *it)
 {
-    EbItem *it = (g_item_count > 0) ? &g_items[g_sel] : NULL;
-    const char *want = browse_hero_wanted_id();
+    const char *want = (it && it->backdrop_tag[0]) ? it->id : "";
     int dh = hero_rect_h(fb);
 
     if (g_hero_px && g_hero_h == dh && strcmp(g_hero_item_id, want) == 0) return;
@@ -1789,6 +1794,11 @@ static void browse_hero_load(FBDev *fb)
     g_hero_w = fb->width; g_hero_h = dh;
     strncpy(g_hero_item_id, it->id, sizeof(g_hero_item_id) - 1);
     g_hero_item_id[sizeof(g_hero_item_id) - 1] = '\0';
+}
+
+static void browse_hero_load(FBDev *fb)
+{
+    hero_load_item(fb, (g_item_count > 0) ? &g_items[g_sel] : NULL);
 }
 
 /* Background fill of the SD cover cache for the current list, so scrolling
@@ -1815,8 +1825,14 @@ static void *cover_prefetch_thread(void *arg)
     return NULL;
 }
 
+static void start_home_prefetch(void);
+
 static void start_cover_prefetch(void)
 {
+    if (g_stack_depth > 0 && g_stack[g_stack_depth - 1].kind == FRAME_VIEWS) {
+        start_home_prefetch();
+        return;
+    }
     CoverPrefetch *cp = malloc(sizeof(*cp));
     if (!cp) return;
     cp->gen = g_cover_gen;
@@ -2239,78 +2255,7 @@ static void draw_carousel_update_notice(FBDev *fb)
     }
 }
 
-/* LEFT/RIGHT slide between old_sel and new_sel. Cards slide (eased) across
- * the whole animation; the background grid fades to black at the midpoint
- * and back in — which is also exactly when the grid is switched to the new
- * library, hidden behind full black so a slow first-time fetch for an
- * uncached library (grid_covers_sync's own download+decode pass) can't
- * show up as a jump-cut. A blocking loop, same as spinner_show()'s — no
- * manual delay beyond fb_flip()'s own vsync wait, which already paces this
- * to the display's real refresh rate (an explicit sleep on top of that
- * just made every step slower for no benefit, once fb_flip started
- * waiting for vsync itself). */
-static void carousel_slide_animate(FBDev *fb, int old_sel, int new_sel)
-{
-    int cy = carousel_cy(fb);
-    int switched = 0;
-    double slide_t0 = now_sec();
-    for (int s = 1; s <= CAROUSEL_SLIDE_STEPS; s++) {
-        double t = (double)s / CAROUSEL_SLIDE_STEPS;
-        double visual = old_sel + (new_sel - old_sel) * carousel_ease(t);
 
-        /* The background used to cross-fade through full black, switching
-         * libraries at the midpoint where nothing was visible — which is what
-         * the sideways push replaced. Leaving the fade in put a hard black
-         * blink at the start of every push, one hiding the other. Switched at
-         * the first step instead of the midpoint, so the push starts with the
-         * slide rather than halfway through it. */
-        if (!switched) {
-            grid_covers_sync(fb, &g_items[new_sel]);
-            switched = 1;
-        }
-
-        fb_clear(fb);
-        draw_grid_background(fb);
-        draw_grid_gradient(fb);
-        draw_top_bar(fb, "MiSTerEmby");
-        draw_carousel_update_notice(fb);
-        draw_carousel_cards(fb, visual, cy);
-        draw_carousel_hint(fb);
-        fb_flip(fb);
-
-        /* Hold this step until its slot in the 60Hz timeline. When vsync
-         * works, fb_flip already blocked past this and the wait is a no-op.
-         * When it does not, this is what makes the slide a slide rather than
-         * six frames drawn as fast as the mosaic happens to allow. */
-        double step_target = slide_t0 + (double)s / 60.0;
-        double step_left   = step_target - now_sec();
-        if (step_left > 0.0) usleep((useconds_t)(step_left * 1000000.0));
-    }
-}
-
-static void draw_browse_carousel(FBDev *fb)
-{
-    if (g_item_count == 0) {
-        theme_backdrop(fb);
-        draw_top_bar(fb, "MiSTerEmby");
-        const char *msg = "No libraries found";
-        draw_text(fb, (fb->width - text_width(fb, msg, 1))/2, fb->height/2, msg, 1, COL_HINT);
-        fb_flip(fb);
-        return;
-    }
-
-    grid_covers_sync(fb, &g_items[g_sel]);
-
-    fb_clear(fb);
-    draw_grid_background(fb);
-    draw_grid_gradient(fb);
-    draw_top_bar(fb, "MiSTerEmby");
-    draw_carousel_update_notice(fb);
-    draw_carousel_cards(fb, (double)g_sel, carousel_cy(fb));
-    draw_carousel_hint(fb);
-
-    fb_flip(fb);
-}
 
 /* ── poster grid ───────────────────────────────────────────────────────────
  * Movie, TV and collection lists draw as a wall of posters, and a season's
@@ -2424,7 +2369,7 @@ typedef struct {
     char     id[EB_ID_LEN];
     char     tag[12];
     int      w, h;
-    int      fit;           /* scaled to fit (a logo) rather than crop-to-fill */
+    int      fit;           /* ART_* — which image, and fit or crop-to-fill */
     uint8_t *px, *dim;      /* full and pre-dimmed, both w*h RGBA */
     unsigned stamp;
 } PosterSlot;
@@ -2494,14 +2439,16 @@ static uint8_t *poster_scale_fit(const uint8_t *src, int sw, int sh, int dw, int
 /* The item's art at cell size, or NULL while it isn't cached (or this
  * redraw's decode budget is spent) — the cell shows a placeholder, and a
  * later redraw fills it in. */
+enum { ART_CROP = 0, ART_FIT = 1, ART_BACKDROP = 2 };
 static PosterSlot *poster_lookup(FBDev *fb, const EbItem *it, int cw, int ch, int fit)
 {
-    if (!it->image_tag[0]) return NULL;
+    const char *tag = (fit == ART_BACKDROP) ? it->backdrop_tag : it->image_tag;
+    if (!tag[0]) return NULL;
     PosterSlot *lru = &g_posters[0];
     for (int i = 0; i < POSTER_POOL; i++) {
         PosterSlot *p = &g_posters[i];
         if (p->px && p->w == cw && p->h == ch && p->fit == fit && !strcmp(p->id, it->id) &&
-            !strncmp(p->tag, it->image_tag, sizeof(p->tag) - 1)) {
+            !strncmp(p->tag, tag, sizeof(p->tag) - 1)) {
             p->stamp = ++g_poster_clock;
             return p;
         }
@@ -2510,12 +2457,13 @@ static PosterSlot *poster_lookup(FBDev *fb, const EbItem *it, int cw, int ch, in
     if (g_poster_decodes_left <= 0 || now_sec() < g_poster_miss_retry_at) return NULL;
 
     char cpath[192];
-    cover_cache_path(it->id, it->image_tag, cpath, sizeof(cpath));
+    if (fit == ART_BACKDROP) hero_cache_path(it->id, tag, cpath, sizeof(cpath));
+    else                     cover_cache_path(it->id, tag, cpath, sizeof(cpath));
     int sw = 0, sh = 0;
     g_poster_decodes_left--;
     uint8_t *src = load_image_keep(cpath, &sw, &sh);
     if (!src) { g_poster_miss_retry_at = now_sec() + 0.3; return NULL; }
-    uint8_t *px = fit ? poster_scale_fit(src, sw, sh, cw, ch, par_correction(fb))
+    uint8_t *px = (fit == ART_FIT) ? poster_scale_fit(src, sw, sh, cw, ch, par_correction(fb))
                       : poster_scale(src, sw, sh, cw, ch, par_correction(fb));
     stbi_image_free(src);
     if (!px) return NULL;
@@ -2530,7 +2478,7 @@ static PosterSlot *poster_lookup(FBDev *fb, const EbItem *it, int cw, int ch, in
 
     free(lru->px); free(lru->dim);
     snprintf(lru->id, sizeof(lru->id), "%s", it->id);
-    snprintf(lru->tag, sizeof(lru->tag), "%s", it->image_tag);
+    snprintf(lru->tag, sizeof(lru->tag), "%s", tag);
     lru->w = cw; lru->h = ch; lru->fit = fit;
     lru->px = px; lru->dim = dim;
     lru->stamp = ++g_poster_clock;
@@ -2708,6 +2656,280 @@ static int browse_grid_input(FBDev *fb, int inp, int kind)
     return nav;
 }
 
+/* ── the home screen ───────────────────────────────────────────────────────
+ * Emby's TV layout: rows of artwork, top to bottom — My Media (the
+ * libraries and Live TV), Continue Watching (recent channels first, with
+ * progress bars), Next Up — with the focused card's details underneath and
+ * its backdrop behind. UP/DOWN moves between rows, LEFT/RIGHT along one.
+ * Cards are 16:9 and drawn from the same art pool as the poster grid, so a
+ * redraw is opaque copies (see poster_lookup). */
+enum { HOME_MEDIA, HOME_CW, HOME_NU, HOME_ROWS };
+static int g_home_row = 0;                  /* focused row, a HOME_* */
+static int g_home_sel[HOME_ROWS];           /* focused card in each row */
+static int g_home_first[HOME_ROWS];         /* first visible card in each row */
+static int g_home_top = 0;                  /* first visible row */
+
+/* My Media is the root list without its Continue Watching and Next Up
+ * tiles, which are rows of their own here: the libraries first, then Live
+ * TV, Recordings and Collections. */
+static int home_media_index(int k)
+{
+    int seen = 0;
+    for (int pass = 0; pass < 2; pass++)
+        for (int i = 0; i < g_item_count; i++) {
+            const EbItem *it = &g_items[i];
+            if (view_is_resume(it) || view_is_nextup(it)) continue;
+            if ((it->synthetic != 0) != pass) continue;
+            if (seen++ == k) return i;
+        }
+    return -1;
+}
+
+static int home_row_count(int row)
+{
+    if (row == HOME_CW) return g_home_cw_n;
+    if (row == HOME_NU) return g_home_nu_n;
+    int n = 0;
+    while (home_media_index(n) >= 0) n++;
+    return n;
+}
+
+static EbItem *home_item(int row, int k)
+{
+    if (k < 0 || k >= home_row_count(row)) return NULL;
+    if (row == HOME_CW) return &g_home_cw[k];
+    if (row == HOME_NU) return &g_home_nu[k];
+    int i = home_media_index(k);
+    return i >= 0 ? &g_items[i] : NULL;
+}
+
+static const char *home_row_title(int row)
+{
+    return row == HOME_CW ? "Continue Watching" : row == HOME_NU ? "Next Up" : "My Media";
+}
+
+/* The rows that have anything in them, in order; returns how many. */
+static int home_rows(int *out)
+{
+    int n = 0;
+    for (int r = 0; r < HOME_ROWS; r++) if (home_row_count(r) > 0) out[n++] = r;
+    return n;
+}
+
+static EbItem *home_focused(void)
+{
+    return home_item(g_home_row, g_home_sel[g_home_row]);
+}
+
+typedef struct { int cols, cw, ch, gx, label_h, row_h, rows_vis, x0, y0, strip_y; } HomeLayout;
+
+static HomeLayout home_layout(FBDev *fb)
+{
+    HomeLayout L;
+    double par = par_correction(fb);
+    int avail_w = fb->width - 2 * SAFE_X;
+    L.cols = 4; L.gx = 10;
+    L.cw = (avail_w - (L.cols - 1) * L.gx) / L.cols;
+    L.ch = (int)(L.cw / (16.0 / 9.0 * par) + 0.5);
+    L.label_h = 15;
+    L.row_h = L.label_h + 2 + L.ch + 10;
+    L.x0 = SAFE_X;
+    L.y0 = SAFE_Y + 22;
+    int strip = 5 + 19 + 4 + 9;                 /* title and a details line */
+    int bottom = fb->height - (8 + SAFE_Y_BOT) - 9;
+    L.rows_vis = (bottom - L.y0 - strip) / L.row_h;
+    if (L.rows_vis < 1) L.rows_vis = 1;
+    L.strip_y = L.y0 + L.rows_vis * L.row_h - 6;
+    return L;
+}
+
+/* Which picture a card shows: a film's wide backdrop, an episode's own
+ * still, a channel's logo (fitted, not cropped), a library's image. */
+static PosterSlot *home_card_art(FBDev *fb, const EbItem *it, int cw, int ch)
+{
+    switch (it->type) {
+    case EB_TYPE_CHANNEL: return poster_lookup(fb, it, cw, ch, ART_FIT);
+    case EB_TYPE_MOVIE: case EB_TYPE_MUSIC_VIDEO:
+        if (it->backdrop_tag[0]) return poster_lookup(fb, it, cw, ch, ART_BACKDROP);
+        return poster_lookup(fb, it, cw, ch, ART_CROP);
+    case EB_TYPE_EPISODE:
+        if (it->image_tag[0]) return poster_lookup(fb, it, cw, ch, ART_CROP);
+        return poster_lookup(fb, it, cw, ch, ART_BACKDROP);
+    default:
+        return it->synthetic ? NULL : poster_lookup(fb, it, cw, ch, ART_CROP);
+    }
+}
+
+static void draw_home(FBDev *fb)
+{
+    HomeLayout L = home_layout(fb);
+    g_poster_decodes_left = POSTER_DECODES_PER_DRAW;
+
+    int rows[HOME_ROWS];
+    int nrows = home_rows(rows);
+    if (nrows == 0) {
+        theme_backdrop(fb);
+        draw_top_bar(fb, "MiSTerEmby");
+        const char *msg = "No libraries found";
+        draw_text(fb, (fb->width - text_width(fb, msg, 1)) / 2, fb->height / 2, msg, 1, COL_HINT);
+        fb_flip(fb);
+        return;
+    }
+    /* Keep the focus on a row that exists, and that row on screen. */
+    int fi = 0;
+    while (fi < nrows && rows[fi] != g_home_row) fi++;
+    if (fi == nrows) { fi = 0; g_home_row = rows[0]; }
+    if (fi < g_home_top) g_home_top = fi;
+    if (fi >= g_home_top + L.rows_vis) g_home_top = fi - L.rows_vis + 1;
+
+    EbItem *focus = home_focused();
+    hero_load_item(fb, focus);
+    fb_clear(fb);
+    if (g_hero_px) fb_blit_opaque(fb, g_hero_px, g_hero_w, g_hero_h, 0, 0, g_hero_w, g_hero_h);
+    else           theme_backdrop(fb);
+    draw_top_bar(fb, "MiSTerEmby");
+    draw_carousel_update_notice(fb);
+
+    for (int v = 0; v < L.rows_vis && g_home_top + v < nrows; v++) {
+        int row = rows[g_home_top + v];
+        int n = home_row_count(row);
+        int y = L.y0 + v * L.row_h;
+        int focused_row = (row == g_home_row);
+        if (focused_row) uifont_draw(fb, L.x0, y, home_row_title(row), L.label_h, 0xFF, 0xFF, 0xFF);
+        else             uifont_draw(fb, L.x0, y, home_row_title(row), L.label_h, THEME_TEXT2);
+
+        int sel = g_home_sel[row];
+        if (sel >= n) sel = g_home_sel[row] = n - 1;
+        if (sel < g_home_first[row]) g_home_first[row] = sel;
+        if (sel >= g_home_first[row] + L.cols) g_home_first[row] = sel - L.cols + 1;
+
+        int cy = y + L.label_h + 2;
+        for (int c = 0; c < L.cols; c++) {
+            int k = g_home_first[row] + c;
+            EbItem *it = home_item(row, k);
+            if (!it) break;
+            int cx = L.x0 + c * (L.cw + L.gx);
+            int on = focused_row && k == sel;
+            if (on) theme_round_rect(fb, cx - 3, cy - 3, L.cw + 6, L.ch + 6, 4, THEME_GREEN, 255);
+
+            PosterSlot *ps = home_card_art(fb, it, L.cw, L.ch);
+            if (ps) {
+                fb_blit_opaque(fb, on ? ps->px : ps->dim, L.cw, L.ch, cx, cy, L.cw, L.ch);
+            } else {
+                theme_round_rect(fb, cx, cy, L.cw, L.ch, 3, 0x26, 0x26, 0x26, 255);
+            }
+            /* Libraries and Live TV carry their name on the card: their
+             * pictures don't say which one they are. */
+            if (row == HOME_MEDIA) {
+                if (ps) fb_fill_rect_alpha(fb, cx, cy + L.ch - 17, L.cw, 17, 0, 0, 0, 150);
+                char name[64];
+                snprintf(name, sizeof(name), "%s", it->name);
+                int nh = 15;
+                uifont_truncate(fb, name, nh, L.cw - 8);
+                int ty = ps ? cy + L.ch - 17 : cy + (L.ch - nh) / 2;
+                int tx = ps ? cx + 5 : cx + (L.cw - uifont_width(fb, name, nh)) / 2;
+                uifont_draw(fb, tx, ty, name, nh, 0xFF, 0xFF, 0xFF);
+            }
+            if (it->played && (it->type == EB_TYPE_MOVIE || it->type == EB_TYPE_EPISODE))
+                theme_check_badge(fb, cx + L.cw - 13, cy + 3, 9);
+            if (it->resume_ticks > 0 && it->runtime_ticks > 0 && !it->played) {
+                double frac = (double)it->resume_ticks / (double)it->runtime_ticks;
+                fb_fill_rect_alpha(fb, cx, cy + L.ch - 4, L.cw, 4, 0x10, 0x10, 0x10, 255);
+                fb_fill_rect_alpha(fb, cx, cy + L.ch - 4, (int)(L.cw * frac + 0.5), 4, THEME_GREEN, 255);
+            }
+        }
+        /* More cards off to the right (or left). */
+        if (g_home_first[row] + L.cols < n)
+            draw_text(fb, fb->width - SAFE_X + 2, cy + L.ch / 2 - 4, ">", 1, THEME_TEXT2);
+        if (g_home_first[row] > 0)
+            draw_text(fb, SAFE_X - 10, cy + L.ch / 2 - 4, "<", 1, THEME_TEXT2);
+    }
+
+    /* The focused card's details. */
+    if (focus) {
+        int y = L.strip_y + 5;
+        int avail_w = fb->width - 2 * SAFE_X;
+        char title[160];
+        snprintf(title, sizeof(title), "%s", focus->name);
+        uifont_truncate(fb, title, 19, avail_w);
+        uifont_draw(fb, SAFE_X, y - 2, title, 19, 0xFF, 0xFF, 0xFF);
+        y += 19 + 2;
+        char meta[96] = "";
+        if (g_home_row == HOME_MEDIA) {
+            int idx = home_media_index(g_home_sel[HOME_MEDIA]);
+            if (idx >= 0 && g_view_counts[idx] > 0)
+                carousel_format_count(focus, g_view_counts[idx], meta, sizeof(meta));
+        } else if (focus->type == EB_TYPE_CHANNEL) {
+            snprintf(meta, sizeof(meta), "Live TV");
+        } else {
+            char rt[16];
+            fmt_runtime(rt, sizeof(rt), focus->runtime_ticks);
+            if (focus->resume_ticks > 0 && !focus->played) {
+                char t[16];
+                fmt_time(t, sizeof(t), (double)focus->resume_ticks / 10000000.0);
+                snprintf(meta, sizeof(meta), "%s%sResume %s", rt, rt[0] ? "   " : "", t);
+            } else {
+                snprintf(meta, sizeof(meta), "%s", rt);
+            }
+        }
+        draw_text(fb, SAFE_X, y, meta, 1, THEME_GREEN_LIGHT);
+    }
+
+    theme_hint_bar(fb, "B:open  SELECT:list view  A:exit");
+    fb_flip(fb);
+}
+
+/* UP/DOWN between rows, LEFT/RIGHT along the focused one. Returns 1 if the
+ * focus moved. */
+static int home_input(int inp)
+{
+    int rows[HOME_ROWS];
+    int nrows = home_rows(rows);
+    if (nrows == 0) return 0;
+    int fi = 0;
+    while (fi < nrows && rows[fi] != g_home_row) fi++;
+    if (fi == nrows) fi = 0;
+    int moved = 0;
+    if ((inp & INP_UP) && fi > 0)            { g_home_row = rows[fi - 1]; moved = 1; }
+    if ((inp & INP_DOWN) && fi + 1 < nrows)  { g_home_row = rows[fi + 1]; moved = 1; }
+    int n = home_row_count(g_home_row);
+    int *sel = &g_home_sel[g_home_row];
+    if ((inp & INP_LEFT)  && *sel > 0)       { (*sel)--; moved = 1; }
+    if ((inp & INP_RIGHT) && *sel + 1 < n)   { (*sel)++; moved = 1; }
+    if ((inp & INP_L) && *sel > 0)           { *sel = *sel > 4 ? *sel - 4 : 0; moved = 1; }
+    if ((inp & INP_R) && *sel + 1 < n)       { *sel = *sel + 4 < n ? *sel + 4 : n - 1; moved = 1; }
+    return moved;
+}
+
+/* Art for every card on the home screen, into the SD cache in the
+ * background (the same thread the lists use). */
+static void start_home_prefetch(void)
+{
+    CoverPrefetch *cp = malloc(sizeof(*cp));
+    if (!cp) return;
+    cp->gen = g_cover_gen;
+    cp->n = 0;
+    for (int row = 0; row < HOME_ROWS; row++) {
+        int n = home_row_count(row);
+        for (int k = 0; k < n && cp->n < EB_PAGE_SIZE; k++) {
+            const EbItem *it = home_item(row, k);
+            if (!it || it->synthetic) continue;
+            snprintf(cp->items[cp->n].id,     EB_ID_LEN, "%s", it->id);
+            snprintf(cp->items[cp->n].img_id, EB_ID_LEN, "%s", it->image_item_id[0] ? it->image_item_id : it->id);
+            snprintf(cp->items[cp->n].tag,    EB_ID_LEN, "%s", it->image_tag);
+            snprintf(cp->items[cp->n].bd_id,  EB_ID_LEN, "%s", it->backdrop_item_id[0] ? it->backdrop_item_id : it->id);
+            snprintf(cp->items[cp->n].bd_tag, EB_ID_LEN, "%s", it->backdrop_tag);
+            cp->n++;
+        }
+    }
+    if (cp->n == 0) { free(cp); return; }
+    pthread_t t; pthread_attr_t at;
+    pthread_attr_init(&at);
+    pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
+    if (pthread_create(&t, &at, cover_prefetch_thread, cp) != 0) free(cp);
+    pthread_attr_destroy(&at);
+}
+
 static void draw_browse(FBDev *fb)
 {
     {
@@ -2716,7 +2938,7 @@ static void draw_browse(FBDev *fb)
         if (kind != GRID_NONE) { draw_browse_grid(fb, kind); return; }
     }
     BrowseFrame *f = &g_stack[g_stack_depth - 1];
-    if (f->kind == FRAME_VIEWS && !g_root_list_mode) { draw_browse_carousel(fb); return; }
+    if (f->kind == FRAME_VIEWS && !g_root_list_mode) { draw_home(fb); return; }
 
     browse_cover_load();
     browse_hero_load(fb);
@@ -6609,16 +6831,7 @@ int main(int argc, char **argv)
              * grid to the new library, since the slide itself deliberately
              * leaves the old one up throughout. */
             if (is_carousel) {
-                if (inp & INP_LEFT && g_sel > 0) {
-                    int old_sel = g_sel--;
-                    carousel_slide_animate(&fb, old_sel, g_sel);
-                    nav = 1;
-                }
-                if (inp & INP_RIGHT && g_sel < g_item_count - 1) {
-                    int old_sel = g_sel++;
-                    carousel_slide_animate(&fb, old_sel, g_sel);
-                    nav = 1;
-                }
+                nav |= home_input(inp);
             } else if (browse_grid_kind() != GRID_NONE) {
                 nav |= browse_grid_input(&fb, inp, browse_grid_kind());
             } else {
@@ -6635,8 +6848,10 @@ int main(int argc, char **argv)
                 if (inp & (INP_RIGHT | INP_R))      nav |= browse_move_sel(&fb, +page);
             }
             if (at_root) g_root_sel = g_sel;   /* see g_root_sel's own comment */
-            if (inp & INP_A && g_item_count > 0) {
-                EbItem *it = &g_items[g_sel];
+            EbItem *picked = is_carousel ? home_focused()
+                                         : (g_item_count > 0 ? &g_items[g_sel] : NULL);
+            if ((inp & INP_A) && picked) {
+                EbItem *it = picked;
                 BrowseFrame *f = &g_stack[g_stack_depth - 1];
                 switch (it->type) {
                 case EB_TYPE_FOLDER:
