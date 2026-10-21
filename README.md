@@ -28,7 +28,7 @@ MiSTerEmby is by **Chris Freeman ([freemchr](https://github.com/freemchr))**. It
 
 ## <a id="screenshots"></a>Screenshots
 
-Rendered with `tools/run-local.sh` against the bundled mock server (`tools/mock-emby.py`), so the library content and cover art are synthetic placeholders.
+Rendered with `tools/run-local.sh` against the bundled mock server (`tools/mock-emby.py`), so the library content and cover art are synthetic placeholders. They are stretched to 4:3, the shape they have on a TV.
 
 | | | |
 |:---:|:---:|:---:|
