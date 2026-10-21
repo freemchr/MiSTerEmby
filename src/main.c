@@ -1249,6 +1249,9 @@ static void changelog_prepare(FBDev *fb)
     /* Trim trailing blank lines so max-scroll lands on real content. */
     while (g_cl_count > 0 && !g_cl_lines[g_cl_count - 1][0]) g_cl_count--;
     if (g_cl_count == 0) cl_push("(no release notes)", 0);
+    /* Where the notes come from, for anyone after more than fits here. */
+    cl_push("", 0);
+    cl_push("github.com/freemchr/MiSTerEmby", 1);
 }
 
 static int changelog_rows(FBDev *fb)
@@ -1981,11 +1984,10 @@ static void draw_confirm_exit(FBDev *fb, int capture)
         memcpy(fb->back, g_exit_bg, sz);
     }
     const char *msg = "Leave MiSTerEmby?";
-    /* The only "about" there is: the version and where the project lives,
-     * quietly along the bottom of the box rather than a page of its own. */
-    const char *about = APP_VERSION "   github.com/freemchr/MiSTerEmby";
-    int w = text_width(fb, about, 1) + 32, h = 120;
-    if (w < 260) w = 260;
+    /* The version, quietly along the bottom of the box: what someone
+     * reporting a problem needs, without a page of its own. */
+    const char *about = APP_VERSION;
+    int w = 260, h = 120;
     int x = (fb->width - w) / 2, y = (fb->height - h) / 2;
     theme_dialog(fb, x, y, w, h, NULL);
     /* The logo's lettering heads the box (measured off-screen first, so it

@@ -68,7 +68,7 @@ Rendered with `tools/run-local.sh` against the bundled mock server (`tools/mock-
 - **Sync with Emby**: resume positions and played state are read from and written back to Emby
 - **Emby dashboard integration**: the session shows up with transcoding info; remote pause/play/stop and admin messages work (messages show as a green banner)
 - **Its own look**: the MiSTerEmby logo and section titles, a rounded display font (Fredoka) for the big text, an Emby-green loading ring, and a green badge in the top bar when an update is out
-- **UI sounds**, a **SELECT+START screenshot** combo, an **opt-in debug log**, and an **in-app updater** from GitHub releases (START when the update badge shows). The exit dialog shows the version and where the project lives
+- **UI sounds**, a **SELECT+START screenshot** combo, an **opt-in debug log**, and an **in-app updater** from GitHub releases (START when the update badge shows). The exit dialog shows the version, and the what's-new screen links to the project on GitHub
 
 ## <a id="requirements"></a>Requirements
 
