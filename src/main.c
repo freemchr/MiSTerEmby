@@ -2728,19 +2728,77 @@ static HomeLayout home_layout(FBDev *fb)
     HomeLayout L;
     double par = par_correction(fb);
     int avail_w = fb->width - 2 * SAFE_X;
-    L.cols = 4; L.gx = 10;
+    /* Three cards a row: as big as two rows and the details line allow on a
+     * 240-line screen. */
+    L.cols = 3; L.gx = 12;
     L.cw = (avail_w - (L.cols - 1) * L.gx) / L.cols;
     L.ch = (int)(L.cw / (16.0 / 9.0 * par) + 0.5);
-    L.label_h = 15;
-    L.row_h = L.label_h + 2 + L.ch + 10;
-    L.x0 = SAFE_X;
-    L.y0 = SAFE_Y + 22;
-    int strip = 5 + 19 + 4 + 9;                 /* title and a details line */
+    L.label_h = 14;
+    L.row_h = L.label_h + 3 + L.ch + 7;
+    int strip = 24;                             /* the focused card's title and details */
+    int top = SAFE_Y + 20;
     int bottom = fb->height - (8 + SAFE_Y_BOT) - 9;
-    L.rows_vis = (bottom - L.y0 - strip) / L.row_h;
-    if (L.rows_vis < 1) L.rows_vis = 1;
-    L.strip_y = L.y0 + L.rows_vis * L.row_h - 6;
+    L.rows_vis = (bottom - top - strip) / L.row_h;
+    if (L.rows_vis > 2) L.rows_vis = 2;
+    if (L.rows_vis < 1) {
+        /* Too short for even one row at this size: shrink the cards. */
+        L.rows_vis = 1;
+        L.ch = bottom - top - strip - L.label_h - 10;
+        L.cw = (int)(L.ch * 16.0 / 9.0 * par + 0.5);
+        L.row_h = L.label_h + 3 + L.ch + 7;
+    }
+    /* The whole block centred between the top bar and the hints. */
+    int block = L.rows_vis * L.row_h + strip;
+    L.y0 = top + (bottom - top - block) / 2;
+    L.x0 = SAFE_X + (avail_w - (L.cols * L.cw + (L.cols - 1) * L.gx)) / 2;
+    L.strip_y = L.y0 + L.rows_vis * L.row_h;
     return L;
+}
+
+/* A small white line from (x0,y0) to (x1,y1), for the card icons. */
+static void icon_line(FBDev *fb, int x0, int y0, int x1, int y1, int t)
+{
+    int steps = abs(x1 - x0) > abs(y1 - y0) ? abs(x1 - x0) : abs(y1 - y0);
+    if (steps == 0) steps = 1;
+    for (int i = 0; i <= steps; i++) {
+        int x = x0 + (x1 - x0) * i / steps, y = y0 + (y1 - y0) * i / steps;
+        fb_fill_rect_alpha(fb, x, y, t, t > 1 ? t / 2 + 1 : 1, 0xFF, 0xFF, 0xFF, 255);
+    }
+}
+
+/* Drawn icons for the app's own tiles, which have no artwork: a TV with
+ * aerials and a red live dot, a record button, a stack of cards. h rows
+ * tall, centred on (cx, cy). */
+static void draw_tile_icon(FBDev *fb, const EbItem *it, int cx, int cy, int h)
+{
+    double par = par_correction(fb);
+    int w = (int)(h * 1.3 * par + 0.5);
+    if (view_is_livetv(it)) {
+        int bh = h * 3 / 4, bw = w, bx = cx - bw / 2, by = cy - h / 2 + h - bh;
+        int t = (int)(2 * par + 0.5);
+        icon_line(fb, cx, by, cx - bw / 4, cy - h / 2, t);          /* aerials */
+        icon_line(fb, cx, by, cx + bw / 4, cy - h / 2, t);
+        theme_round_rect(fb, bx, by, bw, bh, 3, 0xFF, 0xFF, 0xFF, 255);
+        theme_round_rect(fb, bx + t + 1, by + 2, bw - 2 * (t + 1), bh - 4, 2, 0x22, 0x22, 0x22, 255);
+        int d = bh / 3;                                              /* the live dot */
+        theme_round_rect(fb, cx - (int)(d * par) / 2, by + bh / 2 - d / 2, (int)(d * par), d, d / 2,
+                         0xE0, 0x30, 0x30, 255);
+    } else if (view_is_recordings(it)) {
+        int d = h * 3 / 4;
+        theme_round_rect(fb, cx - (int)(d * par) / 2, cy - d / 2, (int)(d * par), d, d / 2,
+                         0xFF, 0xFF, 0xFF, 255);
+        int e = d * 3 / 5;
+        theme_round_rect(fb, cx - (int)(e * par) / 2, cy - e / 2, (int)(e * par), e, e / 2,
+                         0xE0, 0x30, 0x30, 255);
+    } else {
+        int cw = w * 3 / 4, chh = h * 2 / 3;                         /* three stacked cards */
+        for (int k = 2; k >= 0; k--) {
+            int ox = (int)(k * 3 * par), oy = -k * 3;
+            uint8_t v = (uint8_t)(0xFF - k * 0x30);
+            theme_round_rect(fb, cx - cw / 2 + ox - (int)(3 * par), cy - chh / 2 + oy + 3, cw, chh, 2,
+                             v, v, v, 255);
+        }
+    }
 }
 
 /* Which picture a card shows: a film's wide backdrop, an episode's own
@@ -2803,7 +2861,7 @@ static void draw_home(FBDev *fb)
         if (sel < g_home_first[row]) g_home_first[row] = sel;
         if (sel >= g_home_first[row] + L.cols) g_home_first[row] = sel - L.cols + 1;
 
-        int cy = y + L.label_h + 2;
+        int cy = y + L.label_h + 3;
         for (int c = 0; c < L.cols; c++) {
             int k = g_home_first[row] + c;
             EbItem *it = home_item(row, k);
@@ -2821,14 +2879,21 @@ static void draw_home(FBDev *fb)
             /* Libraries and Live TV carry their name on the card: their
              * pictures don't say which one they are. */
             if (row == HOME_MEDIA) {
-                if (ps) fb_fill_rect_alpha(fb, cx, cy + L.ch - 17, L.cw, 17, 0, 0, 0, 150);
                 char name[64];
                 snprintf(name, sizeof(name), "%s", it->name);
-                int nh = 15;
+                int nh = 16;
                 uifont_truncate(fb, name, nh, L.cw - 8);
-                int ty = ps ? cy + L.ch - 17 : cy + (L.ch - nh) / 2;
-                int tx = ps ? cx + 5 : cx + (L.cw - uifont_width(fb, name, nh)) / 2;
-                uifont_draw(fb, tx, ty, name, nh, 0xFF, 0xFF, 0xFF);
+                if (ps) {
+                    fb_fill_rect_alpha(fb, cx, cy + L.ch - nh - 2, L.cw, nh + 2, 0, 0, 0, 150);
+                    uifont_draw(fb, cx + 5, cy + L.ch - nh - 1, name, nh, 0xFF, 0xFF, 0xFF);
+                } else {
+                    /* The app's own tiles: an icon over the name. */
+                    int ih = L.ch - nh - 12;
+                    if (ih > 4 && it->synthetic) draw_tile_icon(fb, it, cx + L.cw / 2, cy + 4 + ih / 2, ih);
+                    int ty = (ih > 4 && it->synthetic) ? cy + L.ch - nh - 3 : cy + (L.ch - nh) / 2;
+                    uifont_draw(fb, cx + (L.cw - uifont_width(fb, name, nh)) / 2, ty, name, nh,
+                                0xFF, 0xFF, 0xFF);
+                }
             }
             if (it->played && (it->type == EB_TYPE_MOVIE || it->type == EB_TYPE_EPISODE))
                 theme_check_badge(fb, cx + L.cw - 13, cy + 3, 9);
@@ -2839,21 +2904,17 @@ static void draw_home(FBDev *fb)
             }
         }
         /* More cards off to the right (or left). */
+        int right_edge = L.x0 + L.cols * L.cw + (L.cols - 1) * L.gx;
         if (g_home_first[row] + L.cols < n)
-            draw_text(fb, fb->width - SAFE_X + 2, cy + L.ch / 2 - 4, ">", 1, THEME_TEXT2);
+            draw_text(fb, right_edge + 4, cy + L.ch / 2 - 4, ">", 1, THEME_TEXT2);
         if (g_home_first[row] > 0)
-            draw_text(fb, SAFE_X - 10, cy + L.ch / 2 - 4, "<", 1, THEME_TEXT2);
+            draw_text(fb, L.x0 - 12, cy + L.ch / 2 - 4, "<", 1, THEME_TEXT2);
     }
 
     /* The focused card's details. */
     if (focus) {
-        int y = L.strip_y + 5;
-        int avail_w = fb->width - 2 * SAFE_X;
-        char title[160];
-        snprintf(title, sizeof(title), "%s", focus->name);
-        uifont_truncate(fb, title, 19, avail_w);
-        uifont_draw(fb, SAFE_X, y - 2, title, 19, 0xFF, 0xFF, 0xFF);
-        y += 19 + 2;
+        int y = L.strip_y;
+        int avail_w = L.cols * L.cw + (L.cols - 1) * L.gx;
         char meta[96] = "";
         if (g_home_row == HOME_MEDIA) {
             int idx = home_media_index(g_home_sel[HOME_MEDIA]);
@@ -2872,7 +2933,14 @@ static void draw_home(FBDev *fb)
                 snprintf(meta, sizeof(meta), "%s", rt);
             }
         }
-        draw_text(fb, SAFE_X, y, meta, 1, THEME_GREEN_LIGHT);
+        /* One line: the title, then its details in green. */
+        int mw = meta[0] ? text_width(fb, meta, 1) + 14 : 0;
+        char title[160];
+        snprintf(title, sizeof(title), "%s", focus->name);
+        uifont_truncate(fb, title, 19, avail_w - mw);
+        uifont_draw(fb, L.x0, y, title, 19, 0xFF, 0xFF, 0xFF);
+        if (meta[0])
+            draw_text(fb, L.x0 + uifont_width(fb, title, 19) + 14, y + 7, meta, 1, THEME_GREEN_LIGHT);
     }
 
     theme_hint_bar(fb, "B:open  SELECT:list view  A:exit");
@@ -2896,8 +2964,8 @@ static int home_input(int inp)
     int *sel = &g_home_sel[g_home_row];
     if ((inp & INP_LEFT)  && *sel > 0)       { (*sel)--; moved = 1; }
     if ((inp & INP_RIGHT) && *sel + 1 < n)   { (*sel)++; moved = 1; }
-    if ((inp & INP_L) && *sel > 0)           { *sel = *sel > 4 ? *sel - 4 : 0; moved = 1; }
-    if ((inp & INP_R) && *sel + 1 < n)       { *sel = *sel + 4 < n ? *sel + 4 : n - 1; moved = 1; }
+    if ((inp & INP_L) && *sel > 0)           { *sel = *sel > 3 ? *sel - 3 : 0; moved = 1; }
+    if ((inp & INP_R) && *sel + 1 < n)       { *sel = *sel + 3 < n ? *sel + 3 : n - 1; moved = 1; }
     return moved;
 }
 
