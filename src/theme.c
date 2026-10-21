@@ -434,6 +434,23 @@ void theme_check_badge(FBDev *fb, int x, int y, int size)
     }
 }
 
+void theme_hop_dots(FBDev *fb, int cx, int y)
+{
+    double t = theme_now();
+    int d = 5;
+    int gap = (int)(5 * par_correction(fb) + 0.5);
+    for (int i = 0; i < 3; i++) {
+        /* Each dot rises and settles in turn, a wave running left to right,
+         * then a beat of rest before the next. */
+        double ph = fmod(t * 1.6, 1.0) * 3.0 * 3.14159265 - i * 0.9;
+        double k = (ph > 0.0 && ph < 3.14159265) ? sin(ph) : 0.0;
+        int hop = (int)(k * 3.0 + 0.5);
+        uint8_t a = (uint8_t)(150 + 105 * k);
+        int x = cx + (i - 1) * (gap + d) - d / 2;
+        theme_round_rect(fb, x, y - hop, d, d, d / 2, 0xFF, 0xFF, 0xFF, a);
+    }
+}
+
 void theme_dots(FBDev *fb, int cx, int y)
 {
     double t = theme_now();

@@ -88,5 +88,9 @@ void theme_check_badge(FBDev *fb, int x, int y, int size);
 
 /* Three pulsing green dots centered on cx — "working on it". */
 void theme_dots(FBDev *fb, int cx, int y);
+/* Three white dots hopping in turn, for activity shown on a green badge
+ * (where theme_dots' green would vanish). cx centres them; y is the row
+ * they rest on. */
+void theme_hop_dots(FBDev *fb, int cx, int y);
 
 #endif

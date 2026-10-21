@@ -2284,7 +2284,7 @@ static void draw_carousel_update_notice(FBDev *fb)
     int arrow_w = arrow ? (int)(8 * par + 0.5) + 6 : 0;
     const char *chip = "START";
     int chip_w = start_chip ? text_width(fb, chip, 1) + 10 : 0;
-    int dots_w = dots ? 30 : 0;
+    int dots_w = dots ? 40 : 0;
     int w = 12 + arrow_w + text_width(fb, msg, 1) + dots_w + (chip_w ? chip_w + 6 : 0) + 8;
     int right = draw_clock(fb) - 10;
     int x = right - w, y = SAFE_Y - 1;
@@ -2293,7 +2293,7 @@ static void draw_carousel_update_notice(FBDev *fb)
     if (arrow) { draw_update_arrow(fb, cx + arrow_w / 2 - 3, y + 3, h - 6); cx += arrow_w; }
     draw_text(fb, cx, y + 3, msg, 1, 0xFF, 0xFF, 0xFF);
     cx += text_width(fb, msg, 1);
-    if (dots) theme_dots(fb, cx + 16, y + 4);
+    if (dots) theme_hop_dots(fb, cx + 22, y + 6);
     if (chip_w) {
         int chx = x + w - 6 - chip_w;
         theme_pill(fb, chx, y + 2, chip_w, h - 4, 0x24, 0x6E, 0x21, 255);
