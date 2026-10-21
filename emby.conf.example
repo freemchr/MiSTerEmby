@@ -84,6 +84,17 @@ PAL
 # TRANSCODE_ALWAYS
 
 
+# ── Matching the refresh rate to the film ──────────────────────────────────
+# Add a line containing just MATCH_REFRESH to switch the display to a whole
+# multiple of a film's frame rate while it plays (71.93Hz for a 23.976fps
+# film on a 75Hz screen) and back afterwards, so every frame shows for the
+# same time. Needs a custom video_mode in MiSTer.ini's [Menu] section; the
+# line rate is kept, so a VGA CRT stays locked. Leave off on a TV or HDMI
+# display that dislikes mode changes.
+#
+# MATCH_REFRESH
+
+
 # ── Live TV ────────────────────────────────────────────────────────────────
 # Live TV comes from your Emby server's TV sources (Emby dashboard: Live TV >
 # TV Sources, e.g. an M3U playlist). When a channel's own stream offers a

@@ -5050,6 +5050,79 @@ static int live_open_with_spinner(FBDev *fb, const char *item_id)
     return ok;
 }
 
+/* ── matching the refresh rate to the film (MATCH_REFRESH) ────────────────
+ * A 23.976fps film on a 75Hz screen can't show every frame for the same
+ * time, which reads as judder. With MATCH_REFRESH, play() asks Main (via
+ * /dev/MiSTer_cmd, which takes a custom modeline while running) for the
+ * MiSTer.ini [Menu] mode re-timed to a whole multiple of the film's rate —
+ * 3 x 23.976 = 71.93Hz, 2 x 29.97 = 59.94Hz — and puts it back afterwards.
+ * Only the vertical blanking and the pixel clock change, so the line rate
+ * stays where the monitor already locks (a 31kHz VGA CRT can't drop it). */
+static char g_base_mode[96] = "";   /* "" = not loaded; "-" = no custom mode */
+static char g_cur_mode[96]  = "";
+
+static int refresh_base_load(void)
+{
+    if (g_base_mode[0]) return g_base_mode[0] != '-';
+    snprintf(g_base_mode, sizeof(g_base_mode), "-");
+    FILE *f = fopen("/media/fat/MiSTer.ini", "r");
+    if (!f) return 0;
+    char line[256];
+    int in_menu = 0;
+    while (fgets(line, sizeof(line), f)) {
+        line[strcspn(line, "\r\n;")] = '\0';
+        if (line[0] == '[') { in_menu = !strncasecmp(line, "[Menu]", 6); continue; }
+        if (!in_menu || strncasecmp(line, "video_mode=", 11)) continue;
+        int a[9];
+        if (sscanf(line + 11, "%d,%d,%d,%d,%d,%d,%d,%d,%d",
+                   &a[0], &a[1], &a[2], &a[3], &a[4], &a[5], &a[6], &a[7], &a[8]) == 9)
+            snprintf(g_base_mode, sizeof(g_base_mode), "%s", line + 11);
+    }
+    fclose(f);
+    snprintf(g_cur_mode, sizeof(g_cur_mode), "%s", g_base_mode);
+    return g_base_mode[0] != '-';
+}
+
+static void refresh_set(const char *mode)
+{
+    if (!strcmp(mode, g_cur_mode)) return;
+    FILE *f = fopen("/dev/MiSTer_cmd", "w");
+    if (!f) return;
+    fprintf(f, "video_mode %s\n", mode);
+    fclose(f);
+    snprintf(g_cur_mode, sizeof(g_cur_mode), "%s", mode);
+}
+
+static void refresh_for_fps(double fps)
+{
+    if (!g_cfg.match_refresh || fps < 10.0 || !refresh_base_load()) return;
+    int a[9];
+    sscanf(g_base_mode, "%d,%d,%d,%d,%d,%d,%d,%d,%d",
+           &a[0], &a[1], &a[2], &a[3], &a[4], &a[5], &a[6], &a[7], &a[8]);
+    int htot = a[0] + a[1] + a[2] + a[3], vtot = a[4] + a[5] + a[6] + a[7];
+    if (htot <= 0 || vtot <= 0 || a[8] <= 0) return;
+    double line_hz = a[8] * 1000.0 / htot;
+    double base_hz = line_hz / vtot;
+    /* The largest whole multiple not above the base rate (a CRT's top is
+     * usually where it's set already), and never below 47Hz. */
+    int n = (int)(base_hz * 1.01 / fps);
+    double target = n * fps;
+    if (n < 1 || target < 47.0 || fabs(target - base_hz) < 0.05) { refresh_set(g_base_mode); return; }
+    int vtot_new = (int)(line_hz / target + 0.5);
+    if (vtot_new < vtot || vtot_new > vtot * 8 / 5) { refresh_set(g_base_mode); return; }
+    int clk = (int)(target * htot * vtot_new / 1000.0 + 0.5);
+    char mode[96];
+    snprintf(mode, sizeof(mode), "%d,%d,%d,%d,%d,%d,%d,%d,%d",
+             a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7] + (vtot_new - vtot), clk);
+    eb_log_line("play: refresh %.3fHz for %.3ffps", clk * 1000.0 / htot / vtot_new, fps);
+    refresh_set(mode);
+}
+
+static void refresh_restore(void)
+{
+    if (g_base_mode[0] && g_base_mode[0] != '-') refresh_set(g_base_mode);
+}
+
 static void play(FBDev *fb, const char *item_id, double offset_secs)
 {
     g_seek_accum = 0.0;
@@ -5082,6 +5155,7 @@ static void play(FBDev *fb, const char *item_id, double offset_secs)
     }
     hls_stop();
     g_live_direct = 0;
+    if (!playing_live()) refresh_for_fps(g_info_item.source_fps);
     if (playing_live()) {
         start_ticks = 0;
         int opened = live_open_with_spinner(fb, item_id);
@@ -7128,6 +7202,7 @@ int main(int argc, char **argv)
             if (r == PLAYER_FRAME_ENDED) {
                 g_end_by_user = 0;
                 playing = 0;
+                refresh_restore();
                 state = STATE_BROWSE;
                 refetch_frame_keep_selection(&fb);
                 draw_browse(&fb);
@@ -7311,6 +7386,7 @@ int main(int argc, char **argv)
         eb_log_line("play: stopped by app exit at %.0fs", pos);
     }
 
+    refresh_restore();
     bgm_resume();
     /* Before eb_log_close(): the mixer thread logs on its way out. */
     sfx_shutdown();

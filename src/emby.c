@@ -1043,6 +1043,11 @@ int eb_config_load(EbConfig *cfg)
             continue;
         }
 
+        if (!strcasecmp(line, "MATCH_REFRESH")) {
+            cfg->match_refresh = 1;
+            continue;
+        }
+
         /* Named settings, KEY=value, recognised anywhere. A server URL never
          * starts with one of these keys, and the positional API key and
          * username lines below can't contain "=" in practice (Emby API keys

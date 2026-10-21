@@ -10,14 +10,20 @@ MiSTerEmby is by **Chris Freeman ([freemchr](https://github.com/freemchr))**. It
 
 ## Contents
 
+- [Quick start](#quick-start)
 - [Screenshots](#screenshots)
 - [Features](#features)
 - [Requirements](#requirements)
 - [Installation](#installation)
   - [Installing and updating with MiSTer Downloader](#installing-and-updating-with-mister-downloader)
+  - [Updating and uninstalling](#updating)
 - [Configuring `emby.conf`](#configuring)
+  - [Every setting](#settings)
   - [Signing in](#signing-in)
+- [Setting up Live TV](#live-tv)
+- [Getting the best picture](#picture)
 - [Controls](#controls)
+- [Troubleshooting](#troubleshooting)
 - [Building from source](#building)
   - [Running it on a desktop](#running-on-desktop)
 - [Status and known limitations](#status)
@@ -25,6 +31,14 @@ MiSTerEmby is by **Chris Freeman ([freemchr](https://github.com/freemchr))**. It
 - [Licence](#licence)
 
 ---
+
+## <a id="quick-start"></a>Quick start
+
+1. Download `misteremby-vX.Y.Z.zip` from [Releases](../../releases) and copy the `misteremby` folder inside it to `/media/fat/` on the SD card. (Or use [MiSTer Downloader](#installing-and-updating-with-mister-downloader).)
+2. Copy `misteremby/MiSTerEmby.sh` from that folder to `/media/fat/Scripts/`.
+3. Create `/media/fat/misteremby/emby.conf` with one line, your Emby server's address: `SERVER=http://192.168.x.x:8096`.
+4. On the MiSTer, open **Scripts → MiSTerEmby**. A PIN appears: enter it at **emby.media/pin** on your phone, signed in to the Emby Connect account linked to your Emby user.
+5. That's it — the sign-in is remembered. See [Getting the best picture](#picture) if you use a CRT.
 
 ## <a id="screenshots"></a>Screenshots
 
@@ -64,20 +78,21 @@ Rendered with `tools/run-local.sh` against the bundled mock server (`tools/mock-
 
 ## <a id="installation"></a>Installation
 
-1. Copy these files from a release zip (or your own build) to `/media/fat/misteremby/` on the MiSTer:
+1. Copy the `misteremby` folder from a release zip to `/media/fat/` on the MiSTer, so you have:
 
    ```
-   misteremby-arm
-   mplayer-arm
-   font/  subfont/  font2x/  subfont2x/
-   sfx/
-   emby.conf          (see below)
+   /media/fat/misteremby/misteremby-arm       the app
+   /media/fat/misteremby/mplayer-arm          its video player (included, nothing else to install)
+   /media/fat/misteremby/font/ subfont/ font2x/ subfont2x/ sfx/
+   /media/fat/misteremby/MiSTerEmby.sh        the launcher
+   /media/fat/misteremby/emby.conf.example    every setting, explained
    ```
 
-2. Copy the launcher, `tools/MiSTerEmby.sh`, to `/media/fat/Scripts/MiSTerEmby.sh`.
-3. Launch **MiSTerEmby** from the MiSTer **Scripts** menu.
+2. Copy the launcher, `misteremby/MiSTerEmby.sh`, to `/media/fat/Scripts/MiSTerEmby.sh`.
+3. Create `/media/fat/misteremby/emby.conf` (see [below](#configuring)).
+4. Launch **MiSTerEmby** from the MiSTer **Scripts** menu.
 
-`make deploy` does steps 1 and 2 over SSH, except for `emby.conf`.
+From a source checkout, `make deploy` does steps 1 and 2 over SSH.
 
 ### Installing and updating with MiSTer Downloader
 
@@ -88,6 +103,11 @@ MiSTerEmby has its own database for MiSTer Downloader and update_all, so it can 
 3. Create `emby.conf` as described below. The database never installs or overwrites `emby.conf` or your saved sign-in.
 
 If you use the database, update through the Downloader rather than the app's own updater (START when the home screen says an update is available). Both write the same files, so the next Downloader run would put back the version the database lists.
+
+### <a id="updating"></a>Updating and uninstalling
+
+- **Updating**: when a new release is out, a green badge with its version appears next to the clock on the home screen. Press START to read what's new, then OK to install, and restart MiSTerEmby. Your `emby.conf` and sign-in are kept. (If you installed with MiSTer Downloader, update with that instead.)
+- **Uninstalling**: delete `/media/fat/misteremby/` and `/media/fat/Scripts/MiSTerEmby.sh`, plus `downloader_misteremby.ini` if you added it. Nothing else on the SD card is changed, apart from any `MiSTer.ini` lines you added yourself.
 
 ## <a id="configuring"></a>Configuring `emby.conf`
 
@@ -105,6 +125,25 @@ PAL
 
 See [`emby.conf.example`](emby.conf.example) for every option, explained.
 
+### <a id="settings"></a>Every setting
+
+Settings are one per line. Names aren't case-sensitive; lines starting with `#` are ignored.
+
+| Setting | What it does |
+|---|---|
+| `SERVER=http://host:8096` | Your Emby server's address. **Required.** A trailing `/emby` is fine. |
+| `PAL` or `NTSC` | The TV mode (default PAL). Use NTSC for a 60Hz/VGA-style setup. |
+| `WxH` or `WxH@BITRATE` | The size and bitrate Emby converts video to (default `720x576@12000000`). Lower it, e.g. `480x270@8000000`, if the network or server struggles. |
+| `USERNAME=` / `PASSWORD=` | Sign in as a local Emby user. |
+| `CONNECT_USER=` / `CONNECT_PASSWORD=` | Sign in with an Emby Connect account, without the PIN. |
+| `API_KEY=` / `USERNAME=` | Sign in with an Emby API key (made in the dashboard under Advanced → API Keys). |
+| `MATCH_REFRESH` | Switch the display to a whole multiple of a film's frame rate while it plays (e.g. 71.93Hz for a 23.976fps film on a 75Hz screen), then back. Needs a custom `video_mode` in the `[Menu]` section of `MiSTer.ini` — see [Getting the best picture](#picture). |
+| `CINEMA_MODE` | Play the trailers chosen by Emby's Cinema Mode before a film started from the beginning. |
+| `TRANSCODE_ALWAYS` | Always have Emby convert video, never stream SD files untouched. |
+| `LIVE_TRANSCODE` | Always have Emby convert Live TV, never play a channel's own stream directly. |
+| `DEBUGLOG` | Write `debug.log` (and `mplayer.log`) next to `emby.conf` for troubleshooting. Safe to share: no addresses, credentials, ids or titles. |
+| `INSECURE_TLS` | Accept a self-signed certificate on an `https://` Emby server. |
+
 ### <a id="signing-in"></a>Signing in
 
 MiSTerEmby picks the first method your `emby.conf` allows:
@@ -120,9 +159,40 @@ After the first sign-in works you can remove any password lines; the saved sign-
 
 There's no on-screen keyboard, so edit `emby.conf` over SSH or on the SD card.
 
+## <a id="live-tv"></a>Setting up Live TV
+
+Live TV comes from your Emby server, so it's set up there, once:
+
+1. In the Emby dashboard go to **Live TV → TV Sources → Add**, and pick **M3U Tuner** for an IPTV playlist (or your tuner, such as an HDHomeRun). For free channels, [iptv-org](https://github.com/iptv-org/iptv) publishes playlists by country, e.g. `https://iptv-org.github.io/iptv/countries/au.m3u`.
+2. Optionally add a TV guide (XMLTV) under **TV Guide Data Providers**, so channels show what's on now.
+3. Live TV may need an Emby Premiere subscription; the dashboard will say.
+
+MiSTerEmby then shows a **Live TV** tile. It opens a menu with one entry per TV source, then the playlists' categories (News, Sports, Kids, ...), then all channels. Pick a channel and it tunes in; BACK cancels while it's tuning.
+
+**How a channel plays:**
+
+- **Direct**: when the channel's own stream comes in a size the MiSTer can decode itself (640x360 or smaller, unencrypted), MiSTerEmby plays it straight from the internet. It starts in a second or two and the server does nothing.
+- **Through the server**: anything else (HD-only streams, or hosts that refuse direct access) is converted by Emby, at a lighter profile so a NAS keeps up. `LIVE_TRANSCODE` makes every channel go this way.
+
+The last three channels you watched appear at the start of Continue Watching.
+
+## <a id="picture"></a>Getting the best picture
+
+- **Your display**: MiSTerEmby draws to the normal MiSTer framebuffer, so it works with whatever output your MiSTer uses. The [display compatibility guide](docs/DISPLAY_COMPATIBILITY.md) lists confirmed cable and `MiSTer.ini` combinations.
+- **PC CRT monitors (31kHz VGA)**: give the menu a custom mode in `MiSTer.ini`, which then also applies to MiSTerEmby. For example, VESA 640x480 at 75Hz:
+
+  ```ini
+  [Menu]
+  video_mode=640,16,64,120,480,1,3,16,31500
+  ```
+
+  The last number is the pixel clock in kHz (`31500`, not `31.5`). At 75Hz, 25fps video shows every frame for exactly three refreshes.
+- **Smooth films**: add `MATCH_REFRESH` to `emby.conf` and MiSTerEmby re-times that mode to suit each title — 71.93Hz for 23.976fps films, 59.94Hz for 29.97fps — keeping the line rate the monitor locks to, and switches back when the film ends. Your monitor's on-screen display should show the change. Leave it off on a TV or HDMI display that doesn't like mode changes.
+- **Stutter**: if it's the server (a NAS without hardware transcoding can only just keep up with HD), lower the transcode profile; if it's the network, the same. `debug.log` records how each title was played.
+
 ## <a id="controls"></a>Controls
 
-Button names follow Xbox-style labels (bottom face button = A, right = B). On Nintendo-layout pads the positions are swapped. The bottom of every screen shows its buttons as chips, with the confirm button in green.
+Button names follow Xbox-style labels (bottom face button = A, right = B). On Nintendo-layout pads the positions are swapped. The bottom of every screen shows its buttons as chips, named for what they do: **OK** (the confirm button, B, in green) and **BACK** (A).
 
 **SELECT+START** (held together, any screen) saves a screenshot to `/media/fat/screenshots/MiSTerEmby/`.
 
@@ -132,9 +202,12 @@ Button names follow Xbox-style labels (bottom face button = A, right = B). On Ni
 | Home | Left / Right | Left / Right | Move along a row |
 | Home | SELECT | Tab | Switch between rows and a plain list |
 | Browse | Up / Down | Up / Down | Move |
+| Poster view | arrows, L / R | arrows, PageUp / PageDown | Move by poster and row; a screenful |
+| Poster view | SELECT | Tab | Switch to the text list and back |
+| Live TV | A | Esc | Cancel while a channel is tuning in |
 | Browse | B | B / Enter / X | Open |
 | Browse | A | A / Esc / Backspace / Z | Back (exit dialog at the top level) |
-| Home | START | Pause / Home | When an update is available: its release notes, then B to install |
+| Home | START | Pause / Home | When the update badge shows: its release notes, then OK to install |
 | Info | B | B / Enter / X | Play or resume |
 | Info | SELECT | Tab | Play from the start (when there's a resume point) |
 | Video | B | B / Enter / X | Pause / resume |
@@ -183,6 +256,21 @@ tools/run-local.sh -k "right,a:1500" -o shot.png
 To try the PIN flow against the mock, start the client with `MISTEREMBY_CONNECT_BASE=http://127.0.0.1:8096/connect/service` and only a `SERVER=` line. The mock confirms the PIN after a few polls.
 
 `MISTEREMBY_INPUT_DEBUG=1` prints every input event to stderr, and also works on real hardware over SSH.
+
+## <a id="troubleshooting"></a>Troubleshooting
+
+| Problem | What to try |
+|---|---|
+| "emby.conf not found or incomplete" | Create `/media/fat/misteremby/emby.conf` with a `SERVER=` line. |
+| "Can't connect to server" | Check the address works in a browser on the same network. Right after power-on the MiSTer waits up to 20 seconds for the network. For `https://` with a self-signed certificate, add `INSECURE_TLS`. |
+| The PIN sign-in fails | The PIN expires after a few minutes; press OK for a new one. Your Emby user must be linked to that Emby Connect account (Emby: Settings → Users → your user → Emby Connect). Or sign in with `USERNAME=`/`PASSWORD=`. |
+| Signed in as the wrong user | Delete `token.conf` next to `emby.conf`, or use SELECT on the sign-in screen to pick a user. |
+| A title won't play, or drops back | Turn on `DEBUGLOG`, try again, and look at `debug.log` and `mplayer.log`. Image subtitles (PGS/VobSub) need the server to burn them in; turn the subtitle off if a title with one won't start. |
+| A channel won't tune | Many free IPTV streams are dead or geo-blocked; try another. `mplayer.log` (with `DEBUGLOG`) shows what the stream answered. |
+| Video stutters | See [Getting the best picture](#picture). |
+| "Press any key to continue" after exiting | MiSTerEmby reloads the menu on exit to skip it. To keep the old behaviour, create an empty file `/media/fat/misteremby/keep-script-prompt`. |
+
+Files MiSTerEmby keeps next to `emby.conf`: `token.conf` (the saved sign-in), `device.conf` (this MiSTer's id), `recent_channels.txt`, `covercache/` and `gridcache/` (artwork; safe to delete), and `debug.log`/`mplayer.log` when `DEBUGLOG` is on.
 
 ## <a id="status"></a>Status and known limitations
 

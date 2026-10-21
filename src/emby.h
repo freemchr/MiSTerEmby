@@ -251,6 +251,9 @@ typedef struct {
     /* "LIVE_TRANSCODE" config line: always have the server convert Live TV,
      * never play a channel's own stream directly (see hls.h). */
     int  live_transcode;
+    /* "MATCH_REFRESH" config line: switch the display's refresh to a whole
+     * multiple of a film's frame rate while it plays (see main.c). */
+    int  match_refresh;
     /* "CINEMA_MODE" config line: play the trailers Emby's Cinema Mode picks
      * (eb_list_intros) before a film started from the beginning. */
     int  cinema_mode;
