@@ -2592,8 +2592,9 @@ static void draw_browse_grid(FBDev *fb, int kind)
                 theme_check_badge(fb, x + L.cw - 13, y + 3, 9);
             if (it->resume_ticks > 0 && it->runtime_ticks > 0 && !it->played) {
                 double frac = (double)it->resume_ticks / (double)it->runtime_ticks;
-                fb_fill_rect_alpha(fb, x, y + L.ch - 4, L.cw, 4, 0x10, 0x10, 0x10, 255);
-                fb_fill_rect_alpha(fb, x, y + L.ch - 4, (int)(L.cw * frac + 0.5), 4, THEME_GREEN, 255);
+                /* Inset from the card's edges so it doesn't merge into the
+                 * green focus border. */
+                theme_progress(fb, x + 6, y + L.ch - 8, L.cw - 12, 3, frac);
             }
 
             if (L.label_h) {
@@ -2775,7 +2776,7 @@ static HomeLayout home_layout(FBDev *fb)
     L.ch = (int)(L.cw / (16.0 / 9.0 * par) + 0.5);
     L.label_h = 14;
     L.row_h = L.label_h + 3 + L.ch + 7;
-    int strip = 24;                             /* the focused card's title and details */
+    int strip = 32;                             /* the focused card's title, details under it */
     int top = SAFE_Y + 20;
     int bottom = fb->height - (8 + SAFE_Y_BOT) - 9;
     L.rows_vis = (bottom - top - strip) / L.row_h;
@@ -2939,8 +2940,9 @@ static void draw_home(FBDev *fb)
                 theme_check_badge(fb, cx + L.cw - 13, cy + 3, 9);
             if (it->resume_ticks > 0 && it->runtime_ticks > 0 && !it->played) {
                 double frac = (double)it->resume_ticks / (double)it->runtime_ticks;
-                fb_fill_rect_alpha(fb, cx, cy + L.ch - 4, L.cw, 4, 0x10, 0x10, 0x10, 255);
-                fb_fill_rect_alpha(fb, cx, cy + L.ch - 4, (int)(L.cw * frac + 0.5), 4, THEME_GREEN, 255);
+                /* Inset from the card's edges so it doesn't merge into the
+                 * green focus border. */
+                theme_progress(fb, cx + 6, cy + L.ch - 8, L.cw - 12, 3, frac);
             }
         }
         /* More cards off to the right (or left). */
@@ -2973,21 +2975,21 @@ static void draw_home(FBDev *fb)
                 snprintf(meta, sizeof(meta), "%s", rt);
             }
         }
+        int cx = L.x0 + avail_w / 2;
         /* A library's tile already says which one it is: just its count. */
         if (g_home_row == HOME_MEDIA) {
-            if (meta[0]) uifont_draw(fb, L.x0, y, meta, 19, THEME_GREEN_LIGHT);
+            if (meta[0]) uifont_draw(fb, cx - uifont_width(fb, meta, 19) / 2, y + 4, meta, 19, THEME_GREEN_LIGHT);
             theme_hint_bar(fb, "B:open  SELECT:list view  A:exit");
             fb_flip(fb);
             return;
         }
-        /* One line: the title, then its details in green. */
-        int mw = meta[0] ? text_width(fb, meta, 1) + 14 : 0;
+        /* Centred under the cards: the title, its details in green below. */
         char title[160];
         snprintf(title, sizeof(title), "%s", focus->name);
-        uifont_truncate(fb, title, 19, avail_w - mw);
-        uifont_draw(fb, L.x0, y, title, 19, 0xFF, 0xFF, 0xFF);
+        uifont_truncate(fb, title, 19, avail_w);
+        uifont_draw(fb, cx - uifont_width(fb, title, 19) / 2, y, title, 19, 0xFF, 0xFF, 0xFF);
         if (meta[0])
-            draw_text(fb, L.x0 + uifont_width(fb, title, 19) + 14, y + 7, meta, 1, THEME_GREEN_LIGHT);
+            draw_text(fb, cx - text_width(fb, meta, 1) / 2, y + 22, meta, 1, THEME_GREEN_LIGHT);
     }
 
     theme_hint_bar(fb, "B:open  SELECT:list view  A:exit");
