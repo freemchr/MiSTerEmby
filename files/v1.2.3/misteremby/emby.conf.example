@@ -1,0 +1,148 @@
+# MiSTerEmby config — copy to /media/fat/misteremby/emby.conf and fill in.
+# Lines starting with # and blank lines are ignored. Setting names are not
+# case-sensitive; values are used exactly as written.
+#
+# The only line you need is your Emby server's address (the same one you'd
+# type into a browser; a trailing /emby or / is fine):
+
+SERVER=http://192.168.2.10:8096
+
+# With just that, MiSTerEmby shows an Emby Connect PIN on first launch. On
+# any phone or computer go to https://emby.media/pin, sign in with your Emby
+# Connect account, and type the PIN in. Your Emby user has to be linked to
+# that Emby Connect account (Emby: Settings > Users > your user > Emby
+# Connect). The sign-in is saved to token.conf next to this file, so it only
+# has to be done once.
+
+# TV mode — PAL or NTSC. Optional, defaults to PAL.
+PAL
+
+
+# ── Signing in with a password instead ─────────────────────────────────────
+# For a local Emby user that isn't linked to Emby Connect. The password sits
+# in this file in plain text — once the first sign-in has worked (token.conf
+# exists) you can delete the PASSWORD= line and the saved sign-in keeps
+# working.
+#
+# USERNAME=your-emby-username
+# PASSWORD=your-emby-password
+
+
+# ── Signing in with an Emby Connect account, no PIN ────────────────────────
+# Same result as the PIN, without the trip to emby.media/pin. Same plain-text
+# caveat as above.
+#
+# CONNECT_USER=you@example.com
+# CONNECT_PASSWORD=your-emby-connect-password
+
+
+# ── Using an API key instead ───────────────────────────────────────────────
+# Still supported. An API key is created in the Emby server dashboard under
+# Advanced > API Keys (name it "MiSTerEmby" so it's recognisable later), and
+# needs the username whose watch state it should update:
+#
+# API_KEY=your-api-key-here
+# USERNAME=your-emby-username
+#
+# A PIN or password sign-in is preferable where you have the choice. An API
+# key isn't scoped to a user: it authenticates as the server, and USERNAME
+# only decides which account this client writes watch state to. The same key
+# can read and write any account on the server — a much broader credential
+# than the job needs — and creating one needs admin access.
+#
+# The older positional layout (server on line 1, API key on line 2,
+# username on line 3) is still read too.
+
+
+# ── Transcode profile ──────────────────────────────────────────────────────
+# Optional — "WxH" or "WxH@BITRATE", e.g. 480x270@8000000. It's what Emby is
+# asked to scale video down to before mplayer scales it to fill the screen;
+# the default is 720x576@12000000, or 640x480@8000000 on a 480-line VGA
+# display, where a picture already at screen size saves the MiSTer a scaling
+# pass it can't afford. The pause screen shows which profile is actually in
+# effect. Lower it if a weak network makes playback stutter.
+#
+# 480x270@8000000
+
+
+# ── Cinema Mode ────────────────────────────────────────────────────────────
+# Add a line containing just CINEMA_MODE to play trailers before a film you
+# start from the beginning, like Emby's own apps do. Which trailers (and any
+# custom intros) is decided by the Emby server's Cinema Mode settings. UP
+# skips a trailer; A stops.
+#
+# CINEMA_MODE
+
+
+# ── Direct streaming ───────────────────────────────────────────────────────
+# SD files in a codec the MiSTer decodes easily (DivX/Xvid MPEG-4, MPEG-1,
+# progressive MPEG-2) are streamed with their video untouched: Emby only
+# repackages it and converts the audio, which takes almost no work on a
+# server without hardware transcoding. HD, H.264/HEVC and interlaced DVD
+# sources are always transcoded. Add a line containing just
+# TRANSCODE_ALWAYS to transcode everything instead, e.g. if a direct-streamed
+# file plays badly.
+#
+# TRANSCODE_ALWAYS
+
+
+# ── Matching the refresh rate to the film ──────────────────────────────────
+# Add a line containing just MATCH_REFRESH to switch the display to a whole
+# multiple of a film's frame rate while it plays (71.93Hz for a 23.976fps
+# film on a 75Hz screen) and back afterwards, so every frame shows for the
+# same time. Needs a custom video_mode in MiSTer.ini's [Menu] section; the
+# line rate is kept, so a VGA CRT stays locked. Leave off on a TV or HDMI
+# display that dislikes mode changes.
+#
+# MATCH_REFRESH
+#
+# Add a line containing just PAGEFLIP as well to show each frame by switching
+# the display between two pictures instead of drawing over the one on
+# screen. Every frame then lands on the right refresh: steadier motion on a
+# progressive display (the interlaced core always does this). The MiSTer's
+# own menu program is paused while a video plays.
+#
+# PAGEFLIP
+
+
+# ── Live TV ────────────────────────────────────────────────────────────────
+# Live TV comes from your Emby server's TV sources (Emby dashboard: Live TV >
+# TV Sources, e.g. an M3U playlist). When a channel's own stream offers a
+# small enough version (up to 640x360), MiSTerEmby plays it directly, with
+# no work for the server; anything bigger, encrypted or refused is
+# converted by the server as usual. Add a line containing just
+# LIVE_TRANSCODE to always have the server convert Live TV.
+#
+# LIVE_TRANSCODE
+
+
+# ── Troubleshooting: request log ───────────────────────────────────────────
+# Add a line containing just DEBUGLOG and MiSTerEmby writes
+# /media/fat/misteremby/debug.log. Off by default; the file is overwritten
+# fresh on every launch, so it only ever holds one session's worth.
+#
+# One line per server request (method, endpoint, ok/FAIL, how long it took,
+# how many bytes came back), plus a handful of one-shot lines at startup and
+# during playback: framebuffer geometry, which input devices were found,
+# the relevant MiSTer.ini display settings (ypbpr/scandoubler/video_mode/...
+# — see docs/DISPLAY_COMPATIBILITY.md), which menu core/DDR path is active,
+# the GitHub update check result, and the transcode profile/resolution each
+# time something plays.
+#
+# It does NOT log your server address, API key, access token, password, PIN,
+# anything from a request's query string, user or item ids, or what's
+# actually in your library (no titles) — safe to attach debug.log to a
+# GitHub issue as-is.
+#
+# DEBUGLOG
+
+
+# ── HTTPS with a self-signed certificate ───────────────────────────────────
+# MiSTerEmby verifies your server's TLS certificate by default. If your Emby
+# server is https:// with a self-signed certificate, that verification will
+# fail — add a line containing just INSECURE_TLS to skip it. Only needed for
+# https with a self-signed cert; a plain http:// server (the usual setup)
+# doesn't use TLS at all and ignores this. Emby Connect itself
+# (connect.emby.media) is always verified.
+#
+# INSECURE_TLS
