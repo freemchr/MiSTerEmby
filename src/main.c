@@ -1542,7 +1542,7 @@ static void draw_connect_pin(FBDev *fb)
             PIN_CENTER("If HTTPS self-signed, set INSECURE_TLS in emby.conf", COL_HINT);
             cur_y += sch + lsp * 2;
         }
-        PIN_CENTER("Press B to get a new PIN", COL_ITEM);
+        PIN_CENTER("Press OK to get a new PIN", COL_ITEM);
         break;
     }
 #undef PIN_CENTER
@@ -2021,6 +2021,8 @@ static void carousel_format_count(const EbItem *it, int64_t count, char *buf, si
         snprintf(buf, bufsz, "%lld recording%s", (long long)count, count == 1 ? "" : "s");
     else if (view_is_synthetic(it))
         snprintf(buf, bufsz, "%lld item%s", (long long)count, count == 1 ? "" : "s");
+    else if (!strcmp(ct, "trailers"))
+        snprintf(buf, bufsz, "%lld trailer%s", (long long)count, count == 1 ? "" : "s");
     else if (!strcmp(ct, "movies"))
         snprintf(buf, bufsz, "%lld movie%s", (long long)count, count == 1 ? "" : "s");
     else if (!strcmp(ct, "tvshows"))
@@ -2029,8 +2031,18 @@ static void carousel_format_count(const EbItem *it, int64_t count, char *buf, si
         snprintf(buf, bufsz, "%lld album%s", (long long)count, count == 1 ? "" : "s");
     else if (!strcmp(ct, "musicvideos"))
         snprintf(buf, bufsz, "%lld video%s", (long long)count, count == 1 ? "" : "s");
-    else
-        snprintf(buf, bufsz, "%lld item%s", (long long)count, count == 1 ? "" : "s");
+    else {
+        /* A library with no type set: a one-word plural name ("Trailers")
+         * is its own noun, anything else counts items. */
+        size_t n = strlen(it->name);
+        if (n > 2 && n < 24 && !strchr(it->name, ' ') && it->name[n - 1] == 's' && count != 1) {
+            char noun[24];
+            for (size_t i = 0; i <= n; i++) noun[i] = (char)tolower((unsigned char)it->name[i]);
+            snprintf(buf, bufsz, "%lld %s", (long long)count, noun);
+        } else {
+            snprintf(buf, bufsz, "%lld item%s", (long long)count, count == 1 ? "" : "s");
+        }
+    }
 }
 
 /* One library tile on the home strip, Emby "My Media" style: a rounded
@@ -2933,6 +2945,13 @@ static void draw_home(FBDev *fb)
                 snprintf(meta, sizeof(meta), "%s", rt);
             }
         }
+        /* A library's tile already says which one it is: just its count. */
+        if (g_home_row == HOME_MEDIA) {
+            if (meta[0]) uifont_draw(fb, L.x0, y, meta, 19, THEME_GREEN_LIGHT);
+            theme_hint_bar(fb, "B:open  SELECT:list view  A:exit");
+            fb_flip(fb);
+            return;
+        }
         /* One line: the title, then its details in green. */
         int mw = meta[0] ? text_width(fb, meta, 1) + 14 : 0;
         char title[160];
@@ -3443,7 +3462,7 @@ static void draw_info(FBDev *fb)
      * just above the hint bar, with the secondary action as a dark plate. */
     int resumable = (g_info_item.resume_ticks > 0 && !g_info_item.played);
     {
-        const char *primary = resumable ? "B  Resume" : "B  Play";
+        const char *primary = resumable ? "OK  Resume" : "OK  Play";
         int bh = 16, by = fb->height - 8 - SAFE_Y_BOT - 12 - bh;
         int bw = text_width(fb, primary, 1) + 40;
         int bx = SAFE_X;

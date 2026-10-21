@@ -361,13 +361,19 @@ static void hint_draw_one(FBDev *fb, const char *key, const char *label, void *v
 {
     HintCtx *c = vctx;
     if (c->w > 0) c->x += HINT_GAP, c->w += HINT_GAP;
+    /* The hints are written with the button names (B confirms, A goes
+     * back) but shown as what they do — OK and BACK — the way a TV remote
+     * labels them. */
+    int confirm = !strcmp(key, "B");
+    if (confirm)               key = "OK";
+    else if (!strcmp(key, "A")) key = "BACK";
     if (key[0]) {
         int kw = text_width(fb, key, 1) + CHIP_PAD * 2;
         if (kw < 12) kw = 12;
         if (!c->measure) {
             /* B is the confirm button throughout the app, so its chip takes
              * the accent colour; every other key gets a neutral chip. */
-            if (!strcmp(key, "B"))
+            if (confirm)
                 theme_pill(fb, c->x, c->y - 2, kw, 12, THEME_GREEN, 255);
             else
                 theme_pill(fb, c->x, c->y - 2, kw, 12, 0x48, 0x48, 0x48, 255);
