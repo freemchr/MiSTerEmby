@@ -32,36 +32,28 @@ Rendered with `tools/run-local.sh` against the bundled mock server (`tools/mock-
 
 | | | |
 |:---:|:---:|:---:|
-| <img src="docs/images/screenshots/home.png" width="260"><br>Home: library tiles | <img src="docs/images/screenshots/movies.png" width="260"><br>Library list, played badge | <img src="docs/images/screenshots/episodes.png" width="260"><br>Episodes |
-| <img src="docs/images/screenshots/movie-info.png" width="260"><br>Info, resume progress | <img src="docs/images/screenshots/connect-pin.png" width="260"><br>Emby Connect PIN sign-in | <img src="docs/images/screenshots/posters.png" width="260"><br>Poster view (next release) |
-| <img src="docs/images/screenshots/exit.png" width="260"><br>Exit dialog | <img src="docs/images/screenshots/sign-in-error.png" width="260"><br>Sign-in error | <img src="docs/images/screenshots/config-missing.png" width="260"><br>Setup help |
+| <img src="docs/images/screenshots/home.png" width="260"><br>Home: rows of artwork | <img src="docs/images/screenshots/posters.png" width="260"><br>Poster view | <img src="docs/images/screenshots/episodes.png" width="260"><br>Episodes as stills |
+| <img src="docs/images/screenshots/livetv.png" width="260"><br>Live TV: sources and categories | <img src="docs/images/screenshots/channels.png" width="260"><br>Channels with logos | <img src="docs/images/screenshots/movie-info.png" width="260"><br>Info screen |
+| <img src="docs/images/screenshots/connect-pin.png" width="260"><br>Emby Connect PIN sign-in | <img src="docs/images/screenshots/exit.png" width="260"><br>Exit dialog | <img src="docs/images/screenshots/config-missing.png" width="260"><br>Setup help |
 
 ## <a id="features"></a>Features
 
 - **Emby-style interface**: dark charcoal surfaces, Emby green for focus, progress and played state, rounded tiles and dialogs, button-chip hints along the bottom
 - **Sign in without typing on a gamepad**: an **Emby Connect PIN** (enter it at emby.media/pin from any phone or computer). A local username/password, an Emby Connect account or an API key in `emby.conf` also work. The sign-in is saved, and a revoked one is detected and requested again
-- **Continue Watching and Next Up** appear as the first home tiles when they have something in them
-- **Home screen**: a row of library tiles (name and item count) over a dimmed mosaic of that library's covers. LEFT/RIGHT slides between them; SELECT swaps to a plain list
-- **Browsing**: lists with cover art, played badges, resume progress bars, backdrop art behind the list, a live clock, and scrolling for long titles. Large libraries page in as you scroll
+- **Home screen like Emby's TV apps**: rows of artwork — My Media (your libraries, Live TV, Recordings, Collections), Continue Watching (with progress bars, and the channels you watched last) and Next Up — centred on screen, with the focused title's backdrop behind it. UP/DOWN moves between rows, LEFT/RIGHT along one; SELECT swaps to a plain list
+- **Poster view**: Movies, TV and Collections show as a wall of posters, and a season's episodes as a row of stills with the focused episode's synopsis, the way Emby's TV apps lay them out. SELECT swaps to the text list and back
+- **Live TV and Recordings**: with Live TV set up on the Emby server (an M3U playlist works), Live TV opens a menu of its TV sources and channel categories, each listing its channels with their logos; selecting one tunes straight in, and A cancels while it tunes. A channel whose own stream comes in a size the MiSTer can decode (up to 640x360) plays directly, with no work for the server; others are converted by Emby, at a lighter profile so a NAS keeps up (`LIVE_TRANSCODE` in `emby.conf` always converts). Recordings play like any other title. Live channels can be paused but not seeked
+- **Browsing**: lists with cover art, played badges, resume progress bars, backdrop art behind the list, a live clock, and scrolling for long titles. Large libraries page in as you scroll. Collections lists your Emby box sets even if the server shows no Collections library
 - **Info screen**: backdrop, logo, year, rating, overview, and Play/Resume buttons
-- **Video playback**: server-side transcode to a light MPEG-4 stream the MiSTer can decode in real time, letterboxed or pillarboxed for any source aspect. True interlaced 480i/576i output is supported through the standalone interlaced core (see the [display guide](docs/DISPLAY_COMPATIBILITY.md#interlaced-output))
+- **Video playback**: server-side transcode to a light MPEG-4 stream the MiSTer can decode in real time, letterboxed or pillarboxed for any source aspect. SD DivX/Xvid, MPEG-1 and progressive MPEG-2 files stream with their video untouched, so the server only repackages them (`TRANSCODE_ALWAYS` turns this off). True interlaced 480i/576i output is supported through the standalone interlaced core (see the [display guide](docs/DISPLAY_COMPATIBILITY.md#interlaced-output))
+- **Skip intro and credits**: when Emby has detected a title's intro or credits (Emby's intro detection), a "UP: Skip intro" / "UP: Skip credits" prompt appears at the right moment. Skipping the credits finishes the title and marks it played
+- **Cinema Mode** (opt-in, `CINEMA_MODE` in `emby.conf`): trailers chosen by your Emby server's Cinema Mode settings play before a film started from the beginning; UP skips one
 - **Track picker** (SELECT during playback): audio tracks, subtitles (text subtitles rendered client-side with live sync adjustment; image subtitles burned in by the server), and picture modes for wide titles (Original / Zoom 4:3 / Stretch)
 - **Music**: Artists → Albums → Tracks, direct-play audio, a now-playing screen with real VU meters and selectable backgrounds (starfield, rain, Nebula, Now Spinning, Tunnel), seek, previous/next, auto-advance, and library shuffle
 - **Sync with Emby**: resume positions and played state are read from and written back to Emby
 - **Emby dashboard integration**: the session shows up with transcoding info; remote pause/play/stop and admin messages work (messages show as a green banner)
-- **UI sounds**, a **SELECT+START screenshot** combo, an **opt-in debug log**, and an **in-app updater** from GitHub releases
-
-### Coming in the next release
-
-These are on the `main` branch but not in the v1.0.0 download yet, and haven't been tested on a MiSTer. They'll ship as v1.1.0 once they have been.
-
-- **Poster view**: Movies, TV and Collections show as a wall of posters, and a season's episodes as a row of stills with the focused episode's synopsis below, the way Emby's TV apps lay them out. Art comes from the SD card cache and is scaled once, so it stays light on the MiSTer. SELECT swaps to the text list and back
-- **Live TV and Recordings**: when the Emby server has Live TV set up (an M3U playlist works), a Live TV tile opens a menu of its TV sources and channel categories, each listing its channels with their logos; selecting one tunes straight in. A channel whose own stream comes in a size the MiSTer can decode (up to 640x360) plays directly, with no work for the server; others are converted by Emby (`LIVE_TRANSCODE` in `emby.conf` always converts). A Recordings tile lists finished recordings, which play like any other title. Live channels can be paused but not seeked
-- **Collections**: a home tile for your Emby box sets, even if the server shows no Collections library
-- **Skip intro and credits**: when Emby has detected a title's intro or credits, a "UP: Skip intro" / "UP: Skip credits" prompt appears at the right moment. Skipping the credits finishes the title and marks it played
-- **Direct streaming for SD files**: DivX/Xvid, MPEG-1 and progressive MPEG-2 files play with their video untouched, so the Emby server only repackages them (`TRANSCODE_ALWAYS` in `emby.conf` turns this off)
-- **Choose a user**: SELECT on the sign-in screen lists the server's users
-- **Cinema Mode** (opt-in, `CINEMA_MODE` in `emby.conf`): trailers chosen by your Emby server's Cinema Mode settings play before a film started from the beginning; UP skips one
+- **Its own look**: the MiSTerEmby logo and section titles, a rounded display font (Fredoka) for the big text, an Emby-green loading ring, and a green badge in the top bar when an update is out
+- **UI sounds**, a **SELECT+START screenshot** combo, an **opt-in debug log**, and an **in-app updater** from GitHub releases (START when the update badge shows)
 
 ## <a id="requirements"></a>Requirements
 
@@ -121,7 +113,7 @@ MiSTerEmby picks the first method your `emby.conf` allows:
 2. **Username and password**: `USERNAME=` and `PASSWORD=` lines, for a local Emby user.
 3. **Emby Connect account**: `CONNECT_USER=` and `CONNECT_PASSWORD=` lines.
 4. **API key**: `API_KEY=` and `USERNAME=` lines. The older three-line layout (server, key, username) also works.
-5. **Choose a user** (next release): on the PIN screen, SELECT lists the server's users. Picking one without a password signs straight in, which is handy for a shared household server.
+5. **Choose a user**: on the PIN screen, SELECT lists the server's users. Picking one without a password signs straight in, which is handy for a shared household server.
 6. **Emby Connect PIN** (the default with just `SERVER=`): a PIN appears on screen. Go to **emby.media/pin** on any device, sign in to Emby Connect, and enter it. Your Emby user must be linked to that Emby Connect account (Emby: Settings → Users → your user → Emby Connect).
 
 After the first sign-in works you can remove any password lines; the saved sign-in keeps working. `device.conf` holds a random id for this MiSTer. Don't copy it to a second MiSTer that signs in as the same user, or the two will keep signing each other out.
@@ -136,8 +128,9 @@ Button names follow Xbox-style labels (bottom face button = A, right = B). On Ni
 
 | Where | Button | Keyboard | Action |
 |---|---|---|---|
-| Home | Left / Right | Left / Right | Move between library tiles |
-| Home | SELECT | Tab | Switch between tiles and list |
+| Home | Up / Down | Up / Down | Move between rows |
+| Home | Left / Right | Left / Right | Move along a row |
+| Home | SELECT | Tab | Switch between rows and a plain list |
 | Browse | Up / Down | Up / Down | Move |
 | Browse | B | B / Enter / X | Open |
 | Browse | A | A / Esc / Backspace / Z | Back (exit dialog at the top level) |
@@ -146,7 +139,7 @@ Button names follow Xbox-style labels (bottom face button = A, right = B). On Ni
 | Info | SELECT | Tab | Play from the start (when there's a resume point) |
 | Video | B | B / Enter / X | Pause / resume |
 | Video | Left / Right | Left / Right | Seek 30s |
-| Video | Up | Up | Skip intro / credits (while the prompt shows; next release) |
+| Video | Up | Up | Skip intro / credits / a Cinema Mode trailer (while the prompt shows) |
 | Video | SELECT | Tab | Track picker |
 | Video | L / R | PageUp / PageDown | VSync on / off |
 | Video | A | Esc | Stop |
@@ -193,7 +186,7 @@ To try the PIN flow against the mock, start the client with `MISTEREMBY_CONNECT_
 
 ## <a id="status"></a>Status and known limitations
 
-- **Tested on hardware** against Emby Server 4.10.1 on a Synology NAS (no hardware transcoding), with an HDMI-to-VGA adapter into a 31kHz CRT monitor at 640x480. Confirmed: Emby Connect PIN sign-in, the saved sign-in, browsing, Continue Watching and Next Up, full-screen playback, seek and pause, and resume positions syncing with Emby. Not yet tested: subtitles, switching audio tracks, music, and dashboard messages.
+- **Tested on hardware** against Emby Server 4.10.1 on a Synology NAS (no hardware transcoding), with an HDMI-to-VGA adapter into a 31kHz CRT monitor at 640x480. Confirmed: Emby Connect PIN sign-in, the saved sign-in, the home rows, poster view and browsing, full-screen playback, seek and pause, resume positions syncing with Emby, and Live TV from IPTV (M3U) playlists — both played directly on the MiSTer and converted by the server. Not yet tested on hardware: subtitles, switching audio tracks, music, dashboard messages, skip intro (needs Emby's intro detection), Cinema Mode, choosing a user, and direct streaming of SD files.
 - **Emby has no MPEG-2 encoder**, so video is transcoded to MPEG-4 Part 2, the lightest codec Emby offers. A NAS without hardware transcoding manages about 1.2–1.9x real time from a 1080p H.264 source. That's enough for one stream; heavy load on the server can still stall playback.
 - **Smooth motion depends on the refresh rate.** 25fps video on a 60Hz screen judders slightly. On a PC CRT, a 75Hz `[Menu]` mode in `MiSTer.ini` (`video_mode=640,16,64,120,480,1,3,16,31500`) shows every 25fps frame for exactly 3 refreshes.
 - Burning in image-based subtitles (PGS/VobSub) needs the server to re-encode with the subtitle drawn in. Some Emby setups are known to fail burn-in transcodes. If a title with an image subtitle won't play, turn the subtitle off.
@@ -201,7 +194,7 @@ To try the PIN flow against the mock, start the client with `MISTEREMBY_CONNECT_
 - The command socket (remote control, admin messages) only works with `http://` servers. Everything else works over `https://`.
 - The bitmap font covers Latin-1, so other scripts are transliterated or shown as `?`.
 - If mplayer can't open a stream, you're returned to the browser without an error message.
-- Live TV is transcoded like everything else, so a broadcast HD channel needs a server that can transcode it in real time. A NAS without hardware transcoding may not keep up.
+- Live TV channels that only offer HD streams (or refuse direct access) are converted by the server in real time; a NAS without hardware transcoding manages about 1.2x real time on a 720p channel, which is enough but can jitter under load. Channel lists have no programme names unless Emby has guide data (XMLTV) for them.
 
 ## <a id="credits"></a>Credits
 
