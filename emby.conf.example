@@ -57,8 +57,10 @@ PAL
 # ── Transcode profile ──────────────────────────────────────────────────────
 # Optional — "WxH" or "WxH@BITRATE", e.g. 480x270@8000000. It's what Emby is
 # asked to scale video down to before mplayer scales it to fill the screen;
-# the default is 720x576@12000000. The pause screen shows which profile is
-# actually in effect. Lower it if a weak network makes playback stutter.
+# the default is 720x576@12000000, or 640x480@8000000 on a 480-line VGA
+# display, where a picture already at screen size saves the MiSTer a scaling
+# pass it can't afford. The pause screen shows which profile is actually in
+# effect. Lower it if a weak network makes playback stutter.
 #
 # 480x270@8000000
 
@@ -93,6 +95,14 @@ PAL
 # display that dislikes mode changes.
 #
 # MATCH_REFRESH
+#
+# Add a line containing just PAGEFLIP as well to show each frame by switching
+# the display between two pictures instead of drawing over the one on
+# screen. Every frame then lands on the right refresh: steadier motion on a
+# progressive display (the interlaced core always does this). The MiSTer's
+# own menu program is paused while a video plays.
+#
+# PAGEFLIP
 
 
 # ── Live TV ────────────────────────────────────────────────────────────────

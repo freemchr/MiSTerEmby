@@ -133,11 +133,21 @@ static void cursor_show(void);  /* forward decl for emergency_cleanup */
  * (fb.interlaced_core, not the broader line_double geometry — a
  * progressive HDMI canvas line-doubles the UI without any of this) —
  * progressive modes never suffered the write-vs-beam race badly enough to
- * need it, and keeping Main running is strictly safer. */
+ * need it, and keeping Main running is strictly safer.
+ *
+ * PAGEFLIP in emby.conf engages it on a progressive display as well, for
+ * frame pacing rather than tearing: without it vo_fbdev writes each frame
+ * onto the visible screen as soon as it's decoded, behind a blocking vsync
+ * wait, so a frame shows at the first vsync after its decode instead of
+ * after its due time, and the wait itself skews mplayer's timing loop.
+ * A flip is issued at the frame's due time and latched at the next vsync,
+ * which keeps 23.976fps at 71.93Hz on an even 3-vsync cadence. */
 #define PAGEFLIP_FLAG "/tmp/misteremby_pageflip"
-static int   g_pageflip_mode    = 0;   /* fb.interlaced_core, latched in main() */
+static int   g_pageflip_mode    = 0;   /* interlaced core or PAGEFLIP, latched in main() */
 static int   g_pageflip_engaged = 0;   /* between pageflip_begin() and _end() */
 static pid_t g_mister_pid       = 0;
+static double g_mode_changed_at = 0;   /* now_sec() of the last video_mode sent to Main */
+static int    g_video_640x480   = 0;   /* 480-line progressive display, see stream_profile() */
 
 /* Main_MiSTer's pid, found by comm name — no shell involved (the whole
  * request pipeline is fork+execvp by design, see eb_curl_run). */
@@ -169,6 +179,10 @@ static void pageflip_begin(void)
     if (!g_pageflip_mode || g_pageflip_engaged) return;
     int fd = open(PAGEFLIP_FLAG, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd >= 0) close(fd);
+    /* A MATCH_REFRESH mode change sent moments ago must be applied before
+     * Main stops, or the film plays at the old rate. */
+    double since = now_sec() - g_mode_changed_at;
+    if (since < 1.0) usleep((useconds_t)((1.0 - since) * 1000000.0));
     g_mister_pid = mister_main_pid();
     if (g_mister_pid > 0) kill(g_mister_pid, SIGSTOP);
     fb_set_reflip(1);   /* app overlays re-assert page 0, see fb_set_reflip */
@@ -496,6 +510,7 @@ static const char *now_playing_mode_name(int mode)
 static double g_np_title_shown_until = 0.0;
 
 static EbItem g_info_item;   /* item currently shown on the info screen */
+static int    g_info_focus;  /* info screen's lit button: 0 = Play/Resume, 1 = From start */
 
 /* ── info-screen hero assets (backdrop, logo, cast photos) ───────────────── */
 
@@ -2374,8 +2389,11 @@ static GridLayout grid_layout(FBDev *fb, int kind)
         }
     }
     L.x0 = SAFE_X + (avail_w - (L.cols * L.cw + (L.cols - 1) * L.gx)) / 2;
-    L.y0 = top;
-    L.strip_y = top + L.rows * (L.ch + L.label_h + L.gy) - L.gy;   /* no gap after the last row */
+    /* Rows plus details centred as one block, rather than hung under the
+     * top bar with the spare height pooled above the hint bar. */
+    int spare = room - (L.rows * (L.ch + L.label_h + L.gy) - L.gy);
+    L.y0 = top + (spare > 0 ? spare / 2 : 0);
+    L.strip_y = L.y0 + L.rows * (L.ch + L.label_h + L.gy) - L.gy;   /* no gap after the last row */
     return L;
 }
 
@@ -3471,8 +3489,11 @@ static void draw_info(FBDev *fb)
     int resumable = (g_info_item.resume_ticks > 0 && !g_info_item.played);
     {
         double par = par_correction(fb);
-        const int th = 16, bh = 22, gap = 14;
-        int by = fb->height - 8 - SAFE_Y_BOT - 14 - bh;
+        /* Centred in the gap between the synopsis and the tops of the hint
+         * bar's chips, so it's even above and below in any mode. */
+        const int th = 16, bh = 20, gap = 14;
+        int text_end = ty - 4, chips_top = fb->height - 8 - SAFE_Y_BOT - 5;
+        int by = text_end + (chips_top - text_end - bh) / 2;
         char primary[48];
         if (resumable) {
             char t[16];
@@ -3488,30 +3509,41 @@ static void draw_info(FBDev *fb)
         int total = pw + (resumable ? gap + sw : 0);
         int bx = (fb->width - total) / 2;
 
-        theme_pill(fb, bx, by, pw, bh, THEME_GREEN, 255);
+        /* The lit button (g_info_focus) is the green one, white on green;
+         * the other is a dark plate. */
+        int pf = !resumable || g_info_focus == 0;
+        if (pf) theme_pill(fb, bx, by, pw, bh, THEME_GREEN, 255);
+        else    theme_pill(fb, bx, by, pw, bh, THEME_SURFACE_HI, 255);
         /* Play arrow. */
         int ix = bx + 18, iy = by + (bh - 10) / 2;
         for (int r = 0; r < 10; r++) {
             int len = (int)(((r < 5 ? r : 9 - r) + 1) * par * 1.3 + 0.5);
-            fb_fill_rect_alpha(fb, ix, iy + r, len, 1, 0xFF, 0xFF, 0xFF, 255);
+            if (pf) fb_fill_rect_alpha(fb, ix, iy + r, len, 1, 0xFF, 0xFF, 0xFF, 255);
+            else    fb_fill_rect_alpha(fb, ix, iy + r, len, 1, COL_ITEM, 255);
         }
-        uifont_draw(fb, ix + icon_w + 8, by + (bh - th) / 2, primary, th, 0xFF, 0xFF, 0xFF);
+        if (pf) uifont_draw(fb, ix + icon_w + 8, by + (bh - th) / 2, primary, th, 0xFF, 0xFF, 0xFF);
+        else    uifont_draw(fb, ix + icon_w + 8, by + (bh - th) / 2, primary, th, COL_ITEM);
 
         if (resumable) {
             int sx = bx + pw + gap;
-            theme_pill(fb, sx, by, sw, bh, THEME_SURFACE_HI, 255);
+            if (pf) theme_pill(fb, sx, by, sw, bh, THEME_SURFACE_HI, 255);
+            else    theme_pill(fb, sx, by, sw, bh, THEME_GREEN, 255);
             /* Skip-to-start: a bar and a left-pointing arrow. */
             int jx = sx + 18;
-            fb_fill_rect_alpha(fb, jx, iy, (int)(2 * par + 0.5), 10, COL_ITEM, 255);
             int ax = jx + (int)(3 * par + 0.5);
+            if (pf) fb_fill_rect_alpha(fb, jx, iy, (int)(2 * par + 0.5), 10, COL_ITEM, 255);
+            else    fb_fill_rect_alpha(fb, jx, iy, (int)(2 * par + 0.5), 10, 0xFF, 0xFF, 0xFF, 255);
             for (int r = 0; r < 10; r++) {
                 int len = (int)(((r < 5 ? r : 9 - r) + 1) * par * 1.0 + 0.5);
-                fb_fill_rect_alpha(fb, ax + icon_w - (int)(3 * par) - len, iy + r, len, 1, COL_ITEM, 255);
+                int lx = ax + icon_w - (int)(3 * par) - len;
+                if (pf) fb_fill_rect_alpha(fb, lx, iy + r, len, 1, COL_ITEM, 255);
+                else    fb_fill_rect_alpha(fb, lx, iy + r, len, 1, 0xFF, 0xFF, 0xFF, 255);
             }
-            uifont_draw(fb, jx + icon_w + 8, by + (bh - th) / 2, sec, th, COL_ITEM);
+            if (pf) uifont_draw(fb, jx + icon_w + 8, by + (bh - th) / 2, sec, th, COL_ITEM);
+            else    uifont_draw(fb, jx + icon_w + 8, by + (bh - th) / 2, sec, th, 0xFF, 0xFF, 0xFF);
         }
     }
-    theme_hint_bar(fb, resumable ? "B:resume  SELECT:from start  A:back" : "B:play  A:back");
+    theme_hint_bar(fb, resumable ? "LEFT/RIGHT:choose  B:play  A:back" : "B:play  A:back");
 
     fb_flip(fb);
 }
@@ -3726,6 +3758,18 @@ static EbStreamProfile stream_profile(void)
     p.max_width     = g_cfg.profile_width;
     p.max_height    = g_cfg.profile_height;
     p.video_bitrate = g_cfg.profile_bitrate;
+    /* With no profile in emby.conf, a 480-line progressive display (a 31kHz
+     * VGA CRT) asks for exactly its own 640x480. The 720x576 default came
+     * out 720x540 and had to be scaled down in software every frame, which
+     * with the audio decode kept mplayer's main thread flat out: measured on
+     * hardware, video fell 2.4s behind in 20s and ~4 frames/s were dropped.
+     * At 640x480 swscale only converts colour (VO time 50% -> 16%), with no
+     * drops and A-V at 0.000. */
+    if (!g_cfg.profile_set && g_video_640x480) {
+        p.max_width     = 640;
+        p.max_height    = 480;
+        p.video_bitrate = 8000000;
+    }
     /* Live TV is converted as it airs, so the server has to keep up in
      * real time with no buffer to fall back on: a NAS without hardware
      * transcoding was measured at only 1.2x real time on a 720p channel.
@@ -5115,6 +5159,7 @@ static void refresh_set(const char *mode)
     if (!f) return;
     fprintf(f, "video_mode %s\n", mode);
     fclose(f);
+    g_mode_changed_at = now_sec();
     snprintf(g_cur_mode, sizeof(g_cur_mode), "%s", mode);
 }
 
@@ -6475,6 +6520,7 @@ int main(int argc, char **argv)
 
     g_headless = fb.headless;   /* see g_headless' own comment */
     g_pageflip_mode = fb.interlaced_core;   /* see pageflip_begin()'s comment */
+    g_video_640x480 = fb.width == 640 && fb.phys_height == 480 && !fb.interlaced_core && !fb.ui_scaled;
     /* The interlaced menu core builds its own raster (in-core modeline
      * conversion — different active width and porches than the progressive
      * modes the 24px margin was tuned against over months), and on a real
@@ -6538,6 +6584,8 @@ int main(int argc, char **argv)
         }
     }
     pthread_join(startup_tid, NULL);
+    /* emby.conf is read on the startup thread, so PAGEFLIP only counts now. */
+    if (g_cfg.pageflip) g_pageflip_mode = 1;
 
     AppState state;
     pthread_t pin_tid;
@@ -7094,6 +7142,7 @@ int main(int argc, char **argv)
                 case EB_TYPE_MUSIC_VIDEO:
                 case EB_TYPE_EPISODE:
                     info_assets_load(&fb, it, &spinner_frame_ctr);
+                    g_info_focus = 0;
                     state = STATE_INFO;
                     draw_info(&fb);
                     input_drain();
@@ -7149,13 +7198,19 @@ int main(int argc, char **argv)
             break;
         }
 
-        case STATE_INFO:
-            if (inp & INP_B) {
+        case STATE_INFO: {
+            int resumable = g_info_item.resume_ticks > 0 && !g_info_item.played;
+            if (resumable && (inp & (INP_LEFT | INP_RIGHT | INP_SELECT))) {
+                /* Two buttons, so every move just swaps the lit one —
+                 * SELECT included, as Tab on a keyboard arrives as SELECT. */
+                g_info_focus ^= 1;
+                draw_info(&fb);
+            } else if (inp & INP_B) {
                 info_assets_free();
                 state = STATE_BROWSE;
                 draw_browse(&fb);
                 input_drain();
-            } else if (inp & INP_A) {
+            } else if ((inp & INP_A) && !(resumable && g_info_focus == 1)) {
                 double offset = (g_info_item.played) ? 0.0 :
                     (double)g_info_item.resume_ticks / 10000000.0;
                 info_assets_free();
@@ -7188,7 +7243,8 @@ int main(int argc, char **argv)
                     play(&fb, g_info_item.id, offset);
                 }
                 input_drain();
-            } else if ((inp & INP_SELECT) && g_info_item.resume_ticks > 0 && !g_info_item.played) {
+            } else if (inp & INP_A) {
+                /* From start, lit: straight in, no Cinema Mode trailers. */
                 info_assets_free();
                 playing = 1;
                 state = STATE_PLAYING;
@@ -7199,6 +7255,7 @@ int main(int argc, char **argv)
                 input_drain();
             }
             break;
+        }
 
         case STATE_PLAYING: {
             int r = player_handle_input(&fb, inp, loop_now);

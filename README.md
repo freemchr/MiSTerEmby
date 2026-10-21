@@ -119,7 +119,7 @@ PAL
 ```
 
 - **`PAL` / `NTSC`**: the TV mode. Optional; defaults to PAL.
-- **Transcode profile**: optional, `WxH` or `WxH@BITRATE` (default `720x576@12000000`). Try `480x270@8000000` if a weak network makes playback stutter.
+- **Transcode profile**: optional, `WxH` or `WxH@BITRATE` (default `720x576@12000000`, or `640x480@8000000` on a 480-line VGA display). Try `480x270@8000000` if a weak network makes playback stutter.
 - **`DEBUGLOG`**: writes `/media/fat/misteremby/debug.log`, one line per request plus startup diagnostics. It never contains your server address, credentials, PIN, query strings, ids or titles, so it's safe to attach to an issue.
 - **`INSECURE_TLS`**: skips certificate checks for an `https://` Emby server with a self-signed certificate. Emby Connect is always verified.
 
@@ -133,11 +133,12 @@ Settings are one per line. Names aren't case-sensitive; lines starting with `#` 
 |---|---|
 | `SERVER=http://host:8096` | Your Emby server's address. **Required.** A trailing `/emby` is fine. |
 | `PAL` or `NTSC` | The TV mode (default PAL). Use NTSC for a 60Hz/VGA-style setup. |
-| `WxH` or `WxH@BITRATE` | The size and bitrate Emby converts video to (default `720x576@12000000`). Lower it, e.g. `480x270@8000000`, if the network or server struggles. |
+| `WxH` or `WxH@BITRATE` | The size and bitrate Emby converts video to (default `720x576@12000000`, or `640x480@8000000` on a 480-line VGA display, so the MiSTer needn't rescale every frame). Lower it, e.g. `480x270@8000000`, if the network or server struggles. |
 | `USERNAME=` / `PASSWORD=` | Sign in as a local Emby user. |
 | `CONNECT_USER=` / `CONNECT_PASSWORD=` | Sign in with an Emby Connect account, without the PIN. |
 | `API_KEY=` / `USERNAME=` | Sign in with an Emby API key (made in the dashboard under Advanced → API Keys). |
 | `MATCH_REFRESH` | Switch the display to a whole multiple of a film's frame rate while it plays (e.g. 71.93Hz for a 23.976fps film on a 75Hz screen), then back. Needs a custom `video_mode` in the `[Menu]` section of `MiSTer.ini` — see [Getting the best picture](#picture). |
+| `PAGEFLIP` | Show each video frame by switching between two pictures in memory rather than drawing over the one on screen, so every frame lands on the right refresh. Steadier motion on a progressive display; the interlaced core always does it. The MiSTer's menu program is paused while a video plays. |
 | `CINEMA_MODE` | Play the trailers chosen by Emby's Cinema Mode before a film started from the beginning. |
 | `TRANSCODE_ALWAYS` | Always have Emby convert video, never stream SD files untouched. |
 | `LIVE_TRANSCODE` | Always have Emby convert Live TV, never play a channel's own stream directly. |
@@ -187,7 +188,7 @@ The last three channels you watched appear at the start of Continue Watching.
   ```
 
   The last number is the pixel clock in kHz (`31500`, not `31.5`). At 75Hz, 25fps video shows every frame for exactly three refreshes.
-- **Smooth films**: add `MATCH_REFRESH` to `emby.conf` and MiSTerEmby re-times that mode to suit each title — 71.93Hz for 23.976fps films, 59.94Hz for 29.97fps — keeping the line rate the monitor locks to, and switches back when the film ends. Your monitor's on-screen display should show the change. Leave it off on a TV or HDMI display that doesn't like mode changes.
+- **Smooth films**: add `MATCH_REFRESH` to `emby.conf` and MiSTerEmby re-times that mode to suit each title — 71.93Hz for 23.976fps films, 59.94Hz for 29.97fps — keeping the line rate the monitor locks to, and switches back when the film ends. Your monitor's on-screen display should show the change. Leave it off on a TV or HDMI display that doesn't like mode changes. Add `PAGEFLIP` too, so each frame is put on screen at its exact refresh.
 - **Stutter**: if it's the server (a NAS without hardware transcoding can only just keep up with HD), lower the transcode profile; if it's the network, the same. `debug.log` records how each title was played.
 
 ## <a id="controls"></a>Controls
@@ -208,13 +209,13 @@ Button names follow Xbox-style labels (bottom face button = A, right = B). On Ni
 | Browse | B | B / Enter / X | Open |
 | Browse | A | A / Esc / Backspace / Z | Back (exit dialog at the top level) |
 | Home | START | Pause / Home | When the update badge shows: its release notes, then OK to install |
-| Info | B | B / Enter / X | Play or resume |
-| Info | SELECT | Tab | Play from the start (when there's a resume point) |
+| Info | Left / Right, SELECT | Left / Right, Tab | Choose Resume or From start (when there's a resume point) |
+| Info | B | B / Enter / X | Play the chosen one |
 | Video | B | B / Enter / X | Pause / resume |
 | Video | Left / Right | Left / Right | Seek 30s |
 | Video | Up | Up | Skip intro / credits / a Cinema Mode trailer (while the prompt shows) |
 | Video | SELECT | Tab | Track picker |
-| Video | L / R | PageUp / PageDown | VSync on / off |
+| Video | L / R | PageUp / PageDown | VSync on / off (not with `PAGEFLIP` or the interlaced core) |
 | Video | A | Esc | Stop |
 | Track picker | L / R | PageUp / PageDown | Switch tab |
 | Track picker | Up / Down, Left / Right | arrows | Pick a track, adjust subtitle sync |

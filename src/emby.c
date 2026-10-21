@@ -992,6 +992,7 @@ int eb_config_load(EbConfig *cfg)
                     h >= EB_PROFILE_MIN_H && h <= EB_PROFILE_MAX_H) {
                     cfg->profile_width  = w;
                     cfg->profile_height = h;
+                    cfg->profile_set    = 1;
                     if (rate >= EB_PROFILE_MIN_RATE && rate <= EB_PROFILE_MAX_RATE)
                         cfg->profile_bitrate = rate;
                 }
@@ -1045,6 +1046,11 @@ int eb_config_load(EbConfig *cfg)
 
         if (!strcasecmp(line, "MATCH_REFRESH")) {
             cfg->match_refresh = 1;
+            continue;
+        }
+
+        if (!strcasecmp(line, "PAGEFLIP")) {
+            cfg->pageflip = 1;
             continue;
         }
 

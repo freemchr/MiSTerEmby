@@ -236,6 +236,7 @@ typedef struct {
     int  profile_width;
     int  profile_height;
     int  profile_bitrate;
+    int  profile_set;   /* emby.conf gave a profile line (see stream_profile) */
     /* "DEBUGLOG" config line — see eb_log_init. Off unless the user opted
      * in, so nothing is ever written without them asking for it. */
     int  debug_log;
@@ -254,6 +255,9 @@ typedef struct {
     /* "MATCH_REFRESH" config line: switch the display's refresh to a whole
      * multiple of a film's frame rate while it plays (see main.c). */
     int  match_refresh;
+    /* "PAGEFLIP" config line: hardware page flipping for playback on a
+     * progressive display too, not just the interlaced core (see main.c). */
+    int  pageflip;
     /* "CINEMA_MODE" config line: play the trailers Emby's Cinema Mode picks
      * (eb_list_intros) before a film started from the beginning. */
     int  cinema_mode;
