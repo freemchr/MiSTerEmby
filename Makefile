@@ -1,4 +1,4 @@
-SRCS = src/main.c src/theme.c src/fb.c src/ddr.c src/grid.c src/visualizers.c src/emby.c src/json.c src/session.c src/subtitles.c src/update.c src/input.c src/util.c src/draw.c src/screenshot.c src/sfx.c src/hls.c
+SRCS = src/main.c src/theme.c src/fb.c src/ddr.c src/grid.c src/visualizers.c src/emby.c src/json.c src/session.c src/subtitles.c src/update.c src/input.c src/util.c src/draw.c src/screenshot.c src/sfx.c src/hls.c src/uifont.c
 
 TARGET     = misteremby
 TARGET_ARM = misteremby-arm

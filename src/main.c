@@ -39,6 +39,7 @@
 #include "draw.h"
 #include "screenshot.h"
 #include "hls.h"
+#include "uifont.h"
 #include "sfx.h"
 #include "util.h"
 #include "grid.h"
@@ -1910,19 +1911,22 @@ static void draw_top_bar(FBDev *fb, const char *title)
 
     int title_x0 = SAFE_X + logo_w + 8;
     int title_x1 = clock_x - 12;
-    int title_w  = text_width(fb, title, 2);
+    /* The display font, a little taller than the old 2x bitmap row it
+     * replaces, nudged up so it sits on the same line. */
+    const int th = 22, ty = SAFE_Y - 4;
+    int title_w  = uifont_width(fb, title, th);
     if (strcmp(title, g_marquee_title) != 0) {
         strncpy(g_marquee_title, title, sizeof(g_marquee_title) - 1);
         g_marquee_title[sizeof(g_marquee_title) - 1] = '\0';
         g_marquee_px = 0.0;
     }
     if (title_w <= title_x1 - title_x0) {
-        draw_text(fb, title_x0, SAFE_Y, title, 2, COL_TITLE);
+        uifont_draw(fb, title_x0, ty, title, th, COL_TITLE);
     } else {
         int period = title_w + 40;   /* trailing gap before it loops back to the start */
         int off = (int)g_marquee_px % period;
-        draw_text_clipped(fb, title_x0 - off, SAFE_Y, title, 2, COL_TITLE, title_x0, title_x1);
-        draw_text_clipped(fb, title_x0 - off + period, SAFE_Y, title, 2, COL_TITLE, title_x0, title_x1);
+        uifont_draw_clipped(fb, title_x0 - off, ty, title, th, COL_TITLE, title_x0, title_x1);
+        uifont_draw_clipped(fb, title_x0 - off + period, ty, title, th, COL_TITLE, title_x0, title_x1);
     }
 }
 
@@ -2036,24 +2040,51 @@ static void draw_library_card(FBDev *fb, const EbItem *it, int64_t count, int cx
     char name[64];
     strncpy(name, it->name, sizeof(name) - 1);
     name[sizeof(name) - 1] = '\0';
-    /* Big text when the name fits, otherwise drop to the small font (which
-     * fits twice the characters) before truncating — "Continue Watching"
-     * reads whole that way instead of as "Continue". */
-    int ns = 2;
-    if (text_width(fb, name, 2) > w - 16) { ns = 1; truncate_to_width(fb, name, 1, w - 12); }
-    int ny = (count >= 0) ? y + h / 2 - 14 : y + h / 2 - 8;
-    int nyy = ns == 2 ? ny : ny + 4;
+    /* The display font: one big line when the name fits, otherwise two
+     * smaller ones split at a space ("Continue" / "Watching"), and only then
+     * truncated. */
+    int maxw = w - 12;
+    int nh = 21;
+    char line2[64] = "";
+    if (uifont_width(fb, name, nh) > maxw) {
+        nh = 17;
+        char *sp = NULL;
+        /* The space that best balances the two lines. */
+        int best = 1 << 30;
+        for (char *c = strchr(name, ' '); c; c = strchr(c + 1, ' ')) {
+            *c = '\0';
+            int a = uifont_width(fb, name, nh), b = uifont_width(fb, c + 1, nh);
+            *c = ' ';
+            int worst = a > b ? a : b;
+            if (worst < best) { best = worst; sp = c; }
+        }
+        if (sp && uifont_width(fb, name, nh) > maxw) {
+            *sp = '\0';
+            snprintf(line2, sizeof(line2), "%s", sp + 1);
+        }
+    }
+    uifont_truncate(fb, name, nh, maxw);
+    if (line2[0]) uifont_truncate(fb, line2, nh, maxw);
+    int ch = 14;                                  /* the count's line height */
+    int block = nh * (line2[0] ? 2 : 1) - (line2[0] ? 3 : 0) + (count >= 0 ? ch : 0);
+    int ny = y + (h - block) / 2;
     /* Can't ternary a multi-arg color macro straight into a call — the
      * comma splits into extra call arguments instead of picking r/g/b
      * together. */
-    if (active) draw_text(fb, cx - text_width(fb, name, ns) / 2, nyy, name, ns, 0xFF, 0xFF, 0xFF);
-    else        draw_text(fb, cx - text_width(fb, name, ns) / 2, nyy, name, ns, THEME_TEXT2);
+    for (int l = 0; l < (line2[0] ? 2 : 1); l++) {
+        const char *t = l ? line2 : name;
+        int ly = ny + l * (nh - 3);
+        if (active) uifont_draw(fb, cx - uifont_width(fb, t, nh) / 2, ly, t, nh, 0xFF, 0xFF, 0xFF);
+        else        uifont_draw(fb, cx - uifont_width(fb, t, nh) / 2, ly, t, nh, THEME_TEXT2);
+    }
+    if (line2[0]) nh = nh * 2 - 3;
 
     if (count >= 0) {
         char cbuf[32];
         carousel_format_count(it, count, cbuf, sizeof(cbuf));
-        if (active) draw_text(fb, cx - text_width(fb, cbuf, 1) / 2, ny + 22, cbuf, 1, 0xE8, 0xF6, 0xE6);
-        else        draw_text(fb, cx - text_width(fb, cbuf, 1) / 2, ny + 22, cbuf, 1, THEME_TEXT3);
+        int cy2 = ny + nh;
+        if (active) uifont_draw(fb, cx - uifont_width(fb, cbuf, ch) / 2, cy2, cbuf, ch, 0xE8, 0xF6, 0xE6);
+        else        uifont_draw(fb, cx - uifont_width(fb, cbuf, ch) / 2, cy2, cbuf, ch, THEME_TEXT3);
     }
 }
 
@@ -2607,10 +2638,9 @@ static void draw_browse_grid(FBDev *fb, int kind)
             snprintf(title, sizeof(title), "%d. %s", it->index_number, it->name);
         else
             snprintf(title, sizeof(title), "%s", it->name);
-        int scale = text_width(fb, title, 2) <= avail_w ? 2 : 1;
-        if (scale == 1) truncate_to_width(fb, title, 1, avail_w);
-        draw_text(fb, SAFE_X, y, title, scale, COL_SEL_FG);
-        y += 8 * scale + 5;
+        uifont_truncate(fb, title, 22, avail_w);
+        uifont_draw(fb, SAFE_X, y - 3, title, 22, COL_SEL_FG);
+        y += 16 + 5;
 
         char meta[160] = "", part[48];
         #define META_ADD(...) do { snprintf(part, sizeof(part), __VA_ARGS__); \
