@@ -1,8 +1,8 @@
 {
  "v": 1,
  "db_id": "freemchr/misteremby",
- "timestamp": 1792544610,
- "base_files_url": "https://raw.githubusercontent.com/freemchr/MiSTerEmby/db/files/v1.1.1/",
+ "timestamp": 1792549540,
+ "base_files_url": "https://raw.githubusercontent.com/freemchr/MiSTerEmby/db/files/v1.2.0/",
  "files": {
   "Scripts/MiSTerEmby.sh": {
    "hash": "1416f1511423a3eba303814198e3ecb5",
@@ -12,8 +12,8 @@
    ]
   },
   "misteremby/emby.conf.example": {
-   "hash": "dde9c19e585aabafe39424255ee65912",
-   "size": 7106,
+   "hash": "e802a2c7975ecca5a6971a1150ab8b6b",
+   "size": 7608,
    "tags": [
     "misteremby"
    ]
@@ -61,8 +61,8 @@
    ]
   },
   "misteremby/misteremby-arm": {
-   "hash": "48b7133868f1958f57aafeaf4010a6aa",
-   "size": 2481628,
+   "hash": "fb990bbe35326e121e81dd1ac88ec2e0",
+   "size": 2483836,
    "tags": [
     "misteremby"
    ]
