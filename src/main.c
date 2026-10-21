@@ -1891,13 +1891,20 @@ static void start_cover_prefetch(void)
  * (SPINNER_SIZE+SPINNER_MARGIN) so a loading spinner never overlaps it.
  * Returns the clock's own left edge x, so callers that also draw a title
  * (draw_top_bar) know where they need to stop. */
-static int draw_clock_color(FBDev *fb, uint8_t r, uint8_t g, uint8_t b)
+/* The time of day in 12-hour form with AM/PM ("1:58 PM"). */
+static void format_clock(char *buf, size_t sz)
 {
     time_t now_t = time(NULL);
     struct tm now_tm;
     localtime_r(&now_t, &now_tm);
-    char clock_buf[8];
-    snprintf(clock_buf, sizeof(clock_buf), "%02d:%02d", now_tm.tm_hour, now_tm.tm_min);
+    int h = now_tm.tm_hour % 12;
+    snprintf(buf, sz, "%d:%02d %s", h ? h : 12, now_tm.tm_min, now_tm.tm_hour < 12 ? "AM" : "PM");
+}
+
+static int draw_clock_color(FBDev *fb, uint8_t r, uint8_t g, uint8_t b)
+{
+    char clock_buf[12];
+    format_clock(clock_buf, sizeof(clock_buf));
     int clock_right = fb->width - spinner_width(fb) - SPINNER_MARGIN - 8;
     int clock_x = clock_right - text_width(fb, clock_buf, 1);
     draw_text(fb, clock_x, SAFE_Y + 4, clock_buf, 1, r, g, b);
@@ -5940,11 +5947,8 @@ static void draw_now_playing(FBDev *fb, EbItem *it, double pos)
 
         /* draw_clock() is the shared scale-1 header clock — this mode
          * wants it double-size per user request, so it draws its own. */
-        time_t now_t = time(NULL);
-        struct tm now_tm;
-        localtime_r(&now_t, &now_tm);
-        char clock_buf[8];
-        snprintf(clock_buf, sizeof(clock_buf), "%02d:%02d", now_tm.tm_hour, now_tm.tm_min);
+        char clock_buf[12];
+        format_clock(clock_buf, sizeof(clock_buf));
         draw_text(fb, fb->width - SAFE_X - text_width(fb, clock_buf, 2), SAFE_Y,
                   clock_buf, 2, COL_HINT);
     }
