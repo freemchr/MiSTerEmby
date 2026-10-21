@@ -1966,10 +1966,15 @@ static void draw_confirm_exit(FBDev *fb, int capture)
         memcpy(fb->back, g_exit_bg, sz);
     }
     const char *msg = "Leave MiSTerEmby?";
-    int w = 260, h = 92;
+    int w = 260, h = 104;
     int x = (fb->width - w) / 2, y = (fb->height - h) / 2;
-    theme_dialog(fb, x, y, w, h, "Exit");
-    draw_text(fb, (fb->width - text_width(fb, msg, 1)) / 2, y + 40, msg, 1, COL_ITEM);
+    theme_dialog(fb, x, y, w, h, NULL);
+    /* The logo's lettering heads the box (measured off-screen first, so it
+     * can be centred). */
+    int lh = 30;
+    int lw = theme_brand_wordmark(fb, -4000, y, lh);
+    theme_brand_wordmark(fb, (fb->width - lw) / 2, y + 8, lh);
+    draw_text(fb, (fb->width - text_width(fb, msg, 1)) / 2, y + 8 + lh + 8, msg, 1, COL_ITEM);
 
     /* The focused button is filled Emby green, the other a neutral plate;
      * LEFT/RIGHT moves the focus and B presses it. */
