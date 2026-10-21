@@ -1981,7 +1981,11 @@ static void draw_confirm_exit(FBDev *fb, int capture)
         memcpy(fb->back, g_exit_bg, sz);
     }
     const char *msg = "Leave MiSTerEmby?";
-    int w = 260, h = 104;
+    /* The only "about" there is: the version and where the project lives,
+     * quietly along the bottom of the box rather than a page of its own. */
+    const char *about = APP_VERSION "   github.com/freemchr/MiSTerEmby";
+    int w = text_width(fb, about, 1) + 32, h = 120;
+    if (w < 260) w = 260;
     int x = (fb->width - w) / 2, y = (fb->height - h) / 2;
     theme_dialog(fb, x, y, w, h, NULL);
     /* The logo's lettering heads the box (measured off-screen first, so it
@@ -1993,7 +1997,7 @@ static void draw_confirm_exit(FBDev *fb, int capture)
 
     /* The focused button is filled Emby green, the other a neutral plate;
      * LEFT/RIGHT moves the focus and B presses it. */
-    int bw = 96, bh = 18, by = y + h - bh - 10;
+    int bw = 96, bh = 18, by = y + h - bh - 24;
     int bx[2] = { fb->width / 2 - bw - 6, fb->width / 2 + 6 };
     static const char *const label[2] = { "Exit", "Cancel" };
     for (int i = 0; i < 2; i++) {
@@ -2004,6 +2008,7 @@ static void draw_confirm_exit(FBDev *fb, int capture)
         if (on) draw_text(fb, tx, by + 5, label[i], 1, 0xFF, 0xFF, 0xFF);
         else    draw_text(fb, tx, by + 5, label[i], 1, COL_ITEM);
     }
+    draw_text(fb, (fb->width - text_width(fb, about, 1)) / 2, y + h - 14, about, 1, THEME_TEXT3);
     /* Over the screen's own hints, which the dimming leaves faintly legible. */
     fb_fill_rect_alpha(fb, 0, fb->height - 8 - SAFE_Y_BOT - 8, fb->width, 8 + SAFE_Y_BOT + 8,
                        0x0C, 0x0C, 0x0C, 255);

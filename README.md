@@ -4,7 +4,7 @@
 
 An [Emby](https://emby.media) client for the [MiSTer FPGA](https://misterfpga.org). Browse your Movies, TV, Music and Music Video libraries, see cover art and overviews, and play on a CRT. Video is transcoded by your Emby server and letterboxed to PAL or NTSC, with client-side subtitles, pause/seek/resume, and a music player with a now-playing screen and visualizers. It works with whatever analog output your MiSTer already uses (SCART, composite, component, VGA, HDMI), because it just draws to the standard MiSTer framebuffer.
 
-MiSTerEmby is by **Chris Freeman ([freemchr](https://github.com/freemchr))**. It's a port of [MiSTerFin](https://github.com/puddingstudio/MiSTerFin) by [Pudding Studio](https://pudding.studio), customised for Emby: it keeps MiSTerFin's features and playback pipeline, talks to Emby's API with Emby's own sign-in methods, and has its own Emby-styled interface.
+MiSTerEmby is by **Chris Freeman ([freemchr](https://github.com/freemchr))**. It began as a port of [MiSTerFin](https://github.com/puddingstudio/MiSTerFin) by [Pudding Studio](https://pudding.studio) and is built on its playback pipeline. Since then it has gained Emby's own sign-in methods, an interface modelled on Emby's TV apps, Live TV, skip intro and credits, Cinema Mode, and playback tuned for smooth films on a CRT. See [Credits](#credits) for who made what.
 
 ---
 
@@ -47,8 +47,8 @@ Rendered with `tools/run-local.sh` against the bundled mock server (`tools/mock-
 | | | |
 |:---:|:---:|:---:|
 | <img src="docs/images/screenshots/home.png" width="260"><br>Home: rows of artwork | <img src="docs/images/screenshots/posters.png" width="260"><br>Poster view | <img src="docs/images/screenshots/episodes.png" width="260"><br>Episodes as stills |
-| <img src="docs/images/screenshots/livetv.png" width="260"><br>Live TV: sources and categories | <img src="docs/images/screenshots/channels.png" width="260"><br>Channels with logos | <img src="docs/images/screenshots/movie-info.png" width="260"><br>Info screen |
-| <img src="docs/images/screenshots/connect-pin.png" width="260"><br>Emby Connect PIN sign-in | <img src="docs/images/screenshots/exit.png" width="260"><br>Exit dialog | <img src="docs/images/screenshots/config-missing.png" width="260"><br>Setup help |
+| <img src="docs/images/screenshots/livetv.png" width="260"><br>Live TV: sources and categories | <img src="docs/images/screenshots/channels.png" width="260"><br>Channels with logos | <img src="docs/images/screenshots/movie-info.png" width="260"><br>Info screen: Resume or From start |
+| <img src="docs/images/screenshots/connect-pin.png" width="260"><br>Emby Connect PIN sign-in | <img src="docs/images/screenshots/exit.png" width="260"><br>Exit dialog, with the version | <img src="docs/images/screenshots/config-missing.png" width="260"><br>Setup help |
 
 ## <a id="features"></a>Features
 
@@ -58,8 +58,9 @@ Rendered with `tools/run-local.sh` against the bundled mock server (`tools/mock-
 - **Poster view**: Movies, TV and Collections show as a wall of posters, and a season's episodes as a row of stills with the focused episode's synopsis, the way Emby's TV apps lay them out. SELECT swaps to the text list and back
 - **Live TV and Recordings**: with Live TV set up on the Emby server (an M3U playlist works), Live TV opens a menu of its TV sources and channel categories, each listing its channels with their logos; selecting one tunes straight in, and A cancels while it tunes. A channel whose own stream comes in a size the MiSTer can decode (up to 640x360) plays directly, with no work for the server; others are converted by Emby, at a lighter profile so a NAS keeps up (`LIVE_TRANSCODE` in `emby.conf` always converts). Recordings play like any other title. Live channels can be paused but not seeked
 - **Browsing**: lists with cover art, played badges, resume progress bars, backdrop art behind the list, a live clock, and scrolling for long titles. Large libraries page in as you scroll. Collections lists your Emby box sets even if the server shows no Collections library
-- **Info screen**: backdrop, logo, year, rating, overview, and Play/Resume buttons
+- **Info screen**: backdrop, logo, year, rating, overview, and a Play button, or Resume and From start side by side (LEFT/RIGHT chooses, OK plays)
 - **Video playback**: server-side transcode to a light MPEG-4 stream the MiSTer can decode in real time, letterboxed or pillarboxed for any source aspect. SD DivX/Xvid, MPEG-1 and progressive MPEG-2 files stream with their video untouched, so the server only repackages them (`TRANSCODE_ALWAYS` turns this off). True interlaced 480i/576i output is supported through the standalone interlaced core (see the [display guide](docs/DISPLAY_COMPATIBILITY.md#interlaced-output))
+- **Smooth films on a CRT**: on a 480-line VGA display the server sends exactly 640x480, so the MiSTer never rescales a frame. `MATCH_REFRESH` switches the display to a whole multiple of the film's frame rate (71.93Hz for 23.976fps), and `PAGEFLIP` puts every frame on screen at its exact refresh. Together they give even, judder-free motion; see [Getting the best picture](#picture)
 - **Skip intro and credits**: when Emby has detected a title's intro or credits (Emby's intro detection), a "UP: Skip intro" / "UP: Skip credits" prompt appears at the right moment. Skipping the credits finishes the title and marks it played
 - **Cinema Mode** (opt-in, `CINEMA_MODE` in `emby.conf`): trailers chosen by your Emby server's Cinema Mode settings play before a film started from the beginning; UP skips one
 - **Track picker** (SELECT during playback): audio tracks, subtitles (text subtitles rendered client-side with live sync adjustment; image subtitles burned in by the server), and picture modes for wide titles (Original / Zoom 4:3 / Stretch)
@@ -67,7 +68,7 @@ Rendered with `tools/run-local.sh` against the bundled mock server (`tools/mock-
 - **Sync with Emby**: resume positions and played state are read from and written back to Emby
 - **Emby dashboard integration**: the session shows up with transcoding info; remote pause/play/stop and admin messages work (messages show as a green banner)
 - **Its own look**: the MiSTerEmby logo and section titles, a rounded display font (Fredoka) for the big text, an Emby-green loading ring, and a green badge in the top bar when an update is out
-- **UI sounds**, a **SELECT+START screenshot** combo, an **opt-in debug log**, and an **in-app updater** from GitHub releases (START when the update badge shows)
+- **UI sounds**, a **SELECT+START screenshot** combo, an **opt-in debug log**, and an **in-app updater** from GitHub releases (START when the update badge shows). The exit dialog shows the version and where the project lives
 
 ## <a id="requirements"></a>Requirements
 
@@ -187,9 +188,9 @@ The last three channels you watched appear at the start of Continue Watching.
   video_mode=640,16,64,120,480,1,3,16,31500
   ```
 
-  The last number is the pixel clock in kHz (`31500`, not `31.5`). At 75Hz, 25fps video shows every frame for exactly three refreshes.
+  The last number is the pixel clock in kHz (`31500`, not `31.5`). At 75Hz, 25fps video shows every frame for exactly three refreshes. On a display like this MiSTerEmby asks the server for 640x480 video, the screen's own size: the MiSTer's CPU can't afford to rescale every frame, and when it had to (the old 720x576 default) it dropped frames.
 - **Smooth films**: add `MATCH_REFRESH` to `emby.conf` and MiSTerEmby re-times that mode to suit each title — 71.93Hz for 23.976fps films, 59.94Hz for 29.97fps — keeping the line rate the monitor locks to, and switches back when the film ends. Your monitor's on-screen display should show the change. Leave it off on a TV or HDMI display that doesn't like mode changes. Add `PAGEFLIP` too, so each frame is put on screen at its exact refresh.
-- **Stutter**: if it's the server (a NAS without hardware transcoding can only just keep up with HD), lower the transcode profile; if it's the network, the same. `debug.log` records how each title was played.
+- **Stutter**: first check the transcode profile matches your screen. A profile larger than the display (set in `emby.conf`) makes the MiSTer rescale every frame, which it can't keep up with; remove the line to get the default. If it's the server (a NAS without hardware transcoding can only just keep up with HD) or the network, lower the profile. `debug.log` records the profile and refresh rate each title played with.
 
 ## <a id="controls"></a>Controls
 
@@ -275,9 +276,9 @@ Files MiSTerEmby keeps next to `emby.conf`: `token.conf` (the saved sign-in), `d
 
 ## <a id="status"></a>Status and known limitations
 
-- **Tested on hardware** against Emby Server 4.10.1 on a Synology NAS (no hardware transcoding), with an HDMI-to-VGA adapter into a 31kHz CRT monitor at 640x480. Confirmed: Emby Connect PIN sign-in, the saved sign-in, the home rows, poster view and browsing, full-screen playback, seek and pause, resume positions syncing with Emby, and Live TV from IPTV (M3U) playlists — both played directly on the MiSTer and converted by the server. Not yet tested on hardware: subtitles, switching audio tracks, music, dashboard messages, skip intro (needs Emby's intro detection), Cinema Mode, choosing a user, and direct streaming of SD files.
+- **Tested on hardware** against Emby Server 4.10.1 on a Synology NAS (no hardware transcoding), with an HDMI-to-VGA adapter into a 31kHz CRT monitor at 640x480. Confirmed: Emby Connect PIN sign-in, the saved sign-in, the home rows, poster view and browsing, full-screen playback, seek and pause, resume positions syncing with Emby, smooth 23.976fps films at 71.93Hz (`MATCH_REFRESH` with `PAGEFLIP`, no dropped frames, audio in sync), and Live TV from IPTV (M3U) playlists — both played directly on the MiSTer and converted by the server. Not yet tested on hardware: subtitles, switching audio tracks, music, dashboard messages, skip intro (needs Emby's intro detection), Cinema Mode, choosing a user, and direct streaming of SD files.
 - **Emby has no MPEG-2 encoder**, so video is transcoded to MPEG-4 Part 2, the lightest codec Emby offers. A NAS without hardware transcoding manages about 1.2–1.9x real time from a 1080p H.264 source. That's enough for one stream; heavy load on the server can still stall playback.
-- **Smooth motion depends on the refresh rate.** 25fps video on a 60Hz screen judders slightly. On a PC CRT, a 75Hz `[Menu]` mode in `MiSTer.ini` (`video_mode=640,16,64,120,480,1,3,16,31500`) shows every 25fps frame for exactly 3 refreshes.
+- **Smooth motion depends on the refresh rate.** 25fps video on a 60Hz screen judders slightly. On a PC CRT, a 75Hz `[Menu]` mode in `MiSTer.ini` (`video_mode=640,16,64,120,480,1,3,16,31500`) shows every 25fps frame for exactly 3 refreshes, and `MATCH_REFRESH` re-times it for other frame rates. A TV can't change mode the same way.
 - Burning in image-based subtitles (PGS/VobSub) needs the server to re-encode with the subtitle drawn in. Some Emby setups are known to fail burn-in transcodes. If a title with an image subtitle won't play, turn the subtitle off.
 - Only the first media source (version) of a multi-version item is played.
 - The command socket (remote control, admin messages) only works with `http://` servers. Everything else works over `https://`.
@@ -287,9 +288,24 @@ Files MiSTerEmby keeps next to `emby.conf`: `token.conf` (the saved sign-in), `d
 
 ## <a id="credits"></a>Credits
 
-MiSTerEmby is a derivative of **[MiSTerFin](https://github.com/puddingstudio/MiSTerFin)** by **[Pudding Studio](https://pudding.studio)**, used under CC BY-NC 4.0. The framebuffer UI, playback pipeline, music visualizers, sounds and fonts are theirs, along with the work of MiSTerFin's contributors, including [Izzie Walton (@iwalton3)](https://github.com/iwalton3) and [Trent Nix (@trentnix)](https://github.com/trentnix).
+MiSTerEmby is a derivative of **[MiSTerFin](https://github.com/puddingstudio/MiSTerFin)** by **[Pudding Studio](https://pudding.studio)**, used under CC BY-NC 4.0. From MiSTerFin, with the work of its contributors including [Izzie Walton (@iwalton3)](https://github.com/iwalton3) and [Trent Nix (@trentnix)](https://github.com/trentnix):
 
-MiSTerEmby's changes, by Chris Freeman (freemchr): the Emby API client and sign-in methods (password, Emby Connect, Emby Connect PIN), the Emby command socket, the MPEG-4 transcode path and buffering tuned for Emby, the Emby-styled interface, and the Docker-free MPlayer build.
+- the playback pipeline: driving MPlayer, the patched framebuffer driver, hardware page flipping and the interlaced output
+- the framebuffer, input, session reporting and screenshot code underneath the interface
+- the poster grid, the track picker, client-side subtitles and the in-app updater
+- the music player and its visualizers (starfield, rain, Nebula, Now Spinning, Tunnel)
+- the UI sounds
+
+By Chris Freeman (freemchr), for MiSTerEmby:
+
+- the Emby client: Emby's API, sign-in by password, Emby Connect, Emby Connect PIN, API key or user list, the command socket and dashboard integration
+- the interface: the logo and section titles, the Emby-styled theme, the home rows, Collections, the redesigned info screen and the dialogs
+- Live TV and Recordings, including direct play of a channel's own stream (`hls.c`)
+- skip intro and credits, Cinema Mode, and untouched streaming of SD files
+- smooth films on a CRT: the screen-sized transcode, `MATCH_REFRESH`, and page flipping on progressive displays (`PAGEFLIP`)
+- the MPEG-4 transcode path and buffering tuned for Emby, the MiSTer Downloader database, and the Docker-free MPlayer build
+
+Fonts: the display font is [Fredoka](https://github.com/hafontia/Fredoka-One) by Milena Brandão (SIL Open Font Licence); the small text and subtitles use [font8x8](https://github.com/dhepper/font8x8) by Daniel Hepper (public domain).
 
 Third-party components and their licences are listed in [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md). Emby is a trademark of Emby LLC. MiSTerEmby is an independent project and isn't affiliated with or endorsed by Emby.
 

@@ -17,13 +17,19 @@ where it lives and under what terms. MiSTerEmby's own code is licensed
   Latin-1 range), and the mplayer OSD/subtitle font atlases in `assets/`
   are generated from it by `tools/gen_font.py` / `tools/gen_subfont.py`.
 
+- **[Fredoka](https://github.com/hafontia/Fredoka-One)** — Milena Brandão and
+  the Fredoka Project Authors, SIL Open Font License 1.1. The display font
+  for titles and buttons: `assets/fonts/Fredoka-SemiBold.ttf` (instanced at
+  weight 600), with the licence beside it in `assets/fonts/Fredoka-OFL.txt`.
+  `tools/gen_uifont.py` renders it into the atlas in `src/uifont_data.h`.
+
 - **[MPlayer](https://mplayerhq.hu) 1.5** — the MPlayer team, GPL-2.0-or-later.
   All video/audio playback. The repository and release packages carry an
   `mplayer-arm` built from unmodified upstream source by
   `tools/build-mplayer.sh`, with one
   modified file: `mplayer/vo_fbdev.c` is MPlayer's framebuffer video driver
-  (© 2001 Szabolcs Berecz and MPlayer contributors) carrying this
-  project's vsync-wait and page-flip patch. That file — and the shipped
+  (© 2001 Szabolcs Berecz and MPlayer contributors) carrying MiSTerFin's
+  vsync-wait and page-flip patch. That file — and the shipped
   `mplayer-arm` binary — remain under the GPL; corresponding source is the
   upstream 1.5 release plus that one file in this repository.
 
