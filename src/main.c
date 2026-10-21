@@ -3463,30 +3463,55 @@ static void draw_info(FBDev *fb)
     }
 #endif
 
-    /* Emby's detail page leads with a big green play button; here it sits
-     * just above the hint bar, with the secondary action as a dark plate. */
+    /* Emby's detail page leads with a big green play button: here a
+     * centred pair above the hint bar — Play/Resume in green with a play
+     * arrow (and where it resumes), From start as a dark plate with a
+     * skip-to-start mark. The keys live in the hint bar, not on the
+     * buttons. */
     int resumable = (g_info_item.resume_ticks > 0 && !g_info_item.played);
     {
-        const char *primary = resumable ? "OK  Resume" : "OK  Play";
-        int bh = 16, by = fb->height - 8 - SAFE_Y_BOT - 12 - bh;
-        int bw = text_width(fb, primary, 1) + 40;
-        int bx = SAFE_X;
-        theme_pill(fb, bx, by, bw, bh, THEME_GREEN, 255);
-        /* A small play triangle ahead of the label. */
-        for (int r = 0; r < 7; r++) {
-            int len = (r < 4 ? r : 6 - r) + 1;
-            fb_fill_rect_alpha(fb, bx + 12, by + 4 + r, len * 2, 1, 0xFF, 0xFF, 0xFF, 255);
-        }
-        draw_text(fb, bx + 26, by + 4, primary, 1, 0xFF, 0xFF, 0xFF);
+        double par = par_correction(fb);
+        const int th = 16, bh = 22, gap = 14;
+        int by = fb->height - 8 - SAFE_Y_BOT - 14 - bh;
+        char primary[48];
         if (resumable) {
-            const char *sec = "SELECT  From start";
-            int sw = text_width(fb, sec, 1) + 24;
-            theme_pill(fb, bx + bw + 10, by, sw, bh, THEME_SURFACE_HI, 255);
-            draw_text(fb, bx + bw + 10 + 12, by + 4, sec, 1, COL_ITEM);
+            char t[16];
+            fmt_time(t, sizeof(t), (double)g_info_item.resume_ticks / 10000000.0);
+            snprintf(primary, sizeof(primary), "Resume %s", t);
+        } else {
+            snprintf(primary, sizeof(primary), "Play");
+        }
+        const char *sec = "From start";
+        int icon_w = (int)(7 * par + 0.5);
+        int pw = 18 + icon_w + 8 + uifont_width(fb, primary, th) + 18;
+        int sw = resumable ? 18 + icon_w + 8 + uifont_width(fb, sec, th) + 18 : 0;
+        int total = pw + (resumable ? gap + sw : 0);
+        int bx = (fb->width - total) / 2;
+
+        theme_pill(fb, bx, by, pw, bh, THEME_GREEN, 255);
+        /* Play arrow. */
+        int ix = bx + 18, iy = by + (bh - 10) / 2;
+        for (int r = 0; r < 10; r++) {
+            int len = (int)(((r < 5 ? r : 9 - r) + 1) * par * 1.3 + 0.5);
+            fb_fill_rect_alpha(fb, ix, iy + r, len, 1, 0xFF, 0xFF, 0xFF, 255);
+        }
+        uifont_draw(fb, ix + icon_w + 8, by + (bh - th) / 2, primary, th, 0xFF, 0xFF, 0xFF);
+
+        if (resumable) {
+            int sx = bx + pw + gap;
+            theme_pill(fb, sx, by, sw, bh, THEME_SURFACE_HI, 255);
+            /* Skip-to-start: a bar and a left-pointing arrow. */
+            int jx = sx + 18;
+            fb_fill_rect_alpha(fb, jx, iy, (int)(2 * par + 0.5), 10, COL_ITEM, 255);
+            int ax = jx + (int)(3 * par + 0.5);
+            for (int r = 0; r < 10; r++) {
+                int len = (int)(((r < 5 ? r : 9 - r) + 1) * par * 1.0 + 0.5);
+                fb_fill_rect_alpha(fb, ax + icon_w - (int)(3 * par) - len, iy + r, len, 1, COL_ITEM, 255);
+            }
+            uifont_draw(fb, jx + icon_w + 8, by + (bh - th) / 2, sec, th, COL_ITEM);
         }
     }
-    /* The buttons above already carry B and SELECT; the bar only adds back. */
-    theme_hint_bar(fb, "A:back");
+    theme_hint_bar(fb, resumable ? "B:resume  SELECT:from start  A:back" : "B:play  A:back");
 
     fb_flip(fb);
 }
